@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css" integrity="sha384-HSMxcRTRxnN+Bdg0JdbxYKrThecOKuH5zCYotlSAcp1+c8xmyTe9GYg1l9a69psu" crossorigin="anonymous">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/js/bootstrap.min.js" integrity="sha384-aJ21OjlMXNL5UyIl/XNwTMqvzeRMZH2w8c5cRVpzpU8Y5bApTppSuUkhZXN0VxHd" crossorigin="anonymous"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1, width=device-width">
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="apple-touch-icon" href="favicon.png">
+    <link rel="icon" href="favicon.png" type="image/png" />
+    <title>Tiny Departures Board</title>
+</head>
+<body>
+    <div style="width: min(90%, 500px); margin: 0 auto; padding: 0 10px;">
+        <form id="formsettings">
+            <fieldset>
+                <legend style="text-align: center;">Departures Board Setup</legend>
+                <div class="form-group">
+                <label class="control-label" for="nrKey">National Rail Token</label>
+                    <input id="nrKey" type="text" placeholder="Optionally, enter your 36 character token" class="form-control input-md">
+                    <span class="help-block">You will need a National Rail Enquiries Darwin Lite Webservice token if you wish to display National Rail departures. Enter the token exactly as received (in the format nnnnnnnn-nnnn-nnnn-nnnn-nnnnnnnnnnnn). You can register for a token free of charge <a href="https://realtime.nationalrail.co.uk/OpenLDBWSRegistration" target="_blank">here</a>.</span>
+                </div>
+                <div class="form-group">
+                    <label class="control-label" for="owmKey">OpenWeather Map API Key</label>
+                    <input id="owmKey" type="text" placeholder="Optionally, enter your API key" class="form-control input-md">
+                    <span class="help-block">Enter your openweathermap.org api key if you wish to display station weather information. You can register for a free api key <a href="https://home.openweathermap.org/users/sign_up" target="_blank">here</a>.</span>
+                </div>
+                <div class="form-group">
+                    <div class="row">
+                        <div class="col-xs-6 text-center">
+                            <button id="save" name="save" class="btn btn-primary" type="button">Save</button>
+                        </div>
+                        <div class="col-xs-6 text-center">
+                            <button id="cancel" name="cancel" class="btn btn-default" type="button" disabled>Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </fieldset>
+    </form>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            const nrKeyPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+
+            function validateKeys() {
+                const nrVal  = $('#nrKey').val().trim();
+                const nrEntered  = nrVal.length > 0;
+                const enableSave = !nrEntered || nrKeyPattern.test(nrVal);
+
+                $('#save').prop('disabled', !enableSave);
+            }
+
+            // Load saved API keys
+            $.getJSON('/apikeys.json', function (data) {
+                if (data.nrToken) {
+                    $('#nrKey').val(data.nrToken);
+                }
+                if (data.owmToken) {
+                    $('#owmKey').val(data.owmToken);
+                }
+                // Validate after loading
+                validateKeys();
+                $('#cancel').prop('disabled', false);
+            });
+
+            // Validate on input
+            $('#nrKey').on('input', function () {
+                validateKeys();
+            });
+
+            $('#cancel').click(() => location.replace("/"));
+
+            $('#save').click(function () {
+                const nrToken = $('#nrKey').val();
+                const owmToken = $('#owmKey').val();
+
+                const payload = {
+                    nrToken: nrToken,
+                    owmToken: owmToken
+                };
+
+                $.ajax({
+                    url: '/savekeys',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(payload),
+                    success: function (response) {
+                        alert(response); // Display server's success response text
+                        location.replace("/");
+                    },
+                    error: function (xhr, status, error) {
+                        alert(xhr.responseText); // Display server's error response text
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>

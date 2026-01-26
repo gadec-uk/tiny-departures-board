@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css" integrity="sha384-HSMxcRTRxnN+Bdg0JdbxYKrThecOKuH5zCYotlSAcp1+c8xmyTe9GYg1l9a69psu" crossorigin="anonymous">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/js/bootstrap.min.js" integrity="sha384-aJ21OjlMXNL5UyIl/XNwTMqvzeRMZH2w8c5cRVpzpU8Y5bApTppSuUkhZXN0VxHd" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-3-typeahead/4.0.2/bootstrap3-typeahead.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1, width=device-width">
+    <meta name="apple-mobile-web-app-capable" content="yes"/>
+    <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+    <link rel="apple-touch-icon" href="favicon.png">
+    <link rel="icon" href="favicon.png" type="image/png"/>
+    <title>Tiny Departures Board</title>
+</head>
+<body>
+  <div style="width: min(90%, 500px); margin: 0 auto; padding: 0 5px;">
+    <form id="formsettings">
+      <fieldset>
+        <legend style="position: relative; text-align: center; min-height: 45px; padding-top:8px;">
+          <div id="nrT" style="display:none">Rail Departures Board</div>
+          <div id="busT" style="display:none">Bus Departures Board</div>
+          <div class="dropdown" style="position: absolute; top: 5px; right: 0;">
+            <button class="btn btn-default dropdown-toggle" type="button" id="menuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="true">
+              &#9776;
+            </button>
+            <ul class="dropdown-menu dropdown-menu-right" aria-labelledby="menuButton">
+              <li><a href="#" onclick="handleCheckUpdates()">Check for Updates</a></li>
+              <li><a href="/keys.htm">Edit API Keys</a></li>
+              <li><a href="#" onclick="handleClearWifi()">Clear WiFi Settings</a></li>
+              <li><a href="#" onclick="handleShowTestCard()">Display Alignment</a></li>
+              <li><a href="#" onclick="handleRestartSystem()">Restart System</a></li>
+            </ul>
+          </div>
+        </legend>
+
+        <!-- Board Mode Selector -->
+        <div class="form-group" id="modeSelector">
+          <label class="control-label">Board Mode</label>
+          <div class="btn-group btn-group-justified" data-toggle="buttons">
+            <label id="btnRail" class="btn btn-default">
+              <input type="radio" name="boardmode" id="modeRail" value="0"> Rail
+            </label>
+            <label id="btnBus" class="btn btn-default">
+              <input type="radio" name="boardmode" id="modeBus" value="1"> Bus
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group" id="nrSearchBox" style="display:none">
+          <label class="control-label" for="searchName">Station</label>
+          <input id="searchName" type="text" placeholder="Type the station name" class="form-control input-md typeahead">
+        </div>
+
+        <div class="form-group" id="busAtcoBox" style="display:none">
+          <label class="control-label" for="busAtco">Bus Stop ATCO code</label>
+          <div style="display: flex; gap: 10px;">
+            <div style="flex: 1;">
+              <input id="busAtco" type="text" placeholder="Enter the ATCO code and press verify" class="form-control input-md" style="width:100%;">
+            </div>
+            <div style="flex-shrink: 0;">
+              <button id="verifyAtco" name="verifyAtco" class="btn" type="button" disabled>Verify</button>
+            </div>
+          </div>
+          <span class="help-block" id="busAtcoLongName"></span>
+
+          <div id="busFilterBox" style="margin-bottom:10px; display:none">
+            <label class="control-label" for="busFilter">Only show these Bus services</label>
+            <input id="busFilter" type="text" maxlength="24" placeholder="Enter comma separated service numbers or blank for all" class="form-control input-md">
+          </div>
+
+          <div id="busAtcoHistory" style="display:none">
+            <label for="busAtcoHistoryList">Recently verified ATCO codes</label>
+            <div style="display: flex; gap: 10px;">
+              <div style="flex: 1;">
+                <select id="busAtcoHistoryList" class="form-control">
+                </select>
+              </div>
+              <div style="flex-shrink: 0;">
+                <button id="clearHistory" name="clearHistory" class="btn" type="button">Clear History</button>
+              </div>
+            </div>
+          </div>
+          <div>
+            <span class="help-block">Find bus stop ATCO codes at <a href="https://bustimes.org/search" target="_blank">bustimes.org</a>. Tap <a href="https://github.com/gadec-uk/tiny-departures-board/#bus-stop-atco-codes" target="_blank">here</a> for full instructions.</span>
+          </div>
+        </div>
+
+        <div class="form-group" id="nrCallingBox" style="display:none">
+          <label class="control-label" for="callingStation">Only show services calling at</label>
+          <div style="display: flex; gap: 10px;">
+            <div style="flex: 1;">
+              <input id="callingStation" type="text" placeholder="Station name or leave blank for all services" class="form-control input-md typeahead" style="width:100%;">
+            </div>
+            <div style="flex-shrink: 0;">
+              <button id="clearFilter" name="clearFilter" class="btn" type="button">Clear</button>
+            </div>
+          </div>
+          <div id="platformFilterBox" style="margin-top:10px;">
+            <label class="control-label" for="platformFilter">Only show these platforms</label>
+            <input id="platformFilter" type="text" maxlength="24" placeholder="Enter comma separated platform numbers or blank for all" class="form-control input-md">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="control-label" for="brightness">Brightness</label>
+          <input style="padding: 0px;" type="range" min="1" max="255" value="50" class="form-control" id="brightness">
+          <span class="help-block">Lowering the brightness will help prevent burn-in.</span>
+        </div>
+
+        <div class="form-group">
+          <label class="control-label">Options</label>
+          <div id="optBuses" class="checkbox" style="display:none">
+            <label><input type="checkbox" id="enableBuses"> Include bus replacement services</label>
+          </div>
+          <div id="optWeather" class="checkbox" style="display:none">
+            <label><input type="checkbox" id="enableWeather"> Include current weather at location</label>
+          </div>
+          <div id="optFastRefresh" class="checkbox" style="display:none">
+            <label><input type="checkbox" id="enableFastRefresh"> Increase API refresh rate</label>
+          </div>
+          <div id="optNoScroll" class="checkbox" style="display:none">
+            <label><input type="checkbox" id="noScrolling"> Suppress calling at / information messages</label>
+          </div>
+          <div class="checkbox">
+            <label><input type="checkbox" id="optFlip"> Flip the display 180&deg;</label>
+          </div>
+          <div class="checkbox">
+            <label><input type="checkbox" id="optHost"> Set custom hostname for this board</label>
+          </div>
+          <div id="customHostbox" style="display:none;">
+            <input id="customHost" type="text" maxlength="32" placeholder="Enter the hostname or leave blank for the default" class="form-control input-md">
+            <span class="help-block">Enter the new hostname for this board (letters, numbers, hyphens only).</span>
+          </div>
+          <div class="checkbox">
+            <label><input type="checkbox" id="optTZ"> Custom (non-UK) time zone (only for clock display)</label>
+          </div>
+          <div id="customTZbox" style="display:none;">
+            <input id="customTZ" type="text" maxlength="24" placeholder="Enter the POSIX time zone string or leave blank for UK" class="form-control input-md">
+            <span class="help-block">Enter the exact POSIX time zone. Tap <a href="https://github.com/gadec-uk/tiny-departures-board/#custom-time-zones" target="_blank">here</a> for help.</span>
+          </div>
+          <div class="checkbox">
+            <label><input type="checkbox" id="enableFirmware"> Enable automatic firmware updates at startup</label>
+          </div>
+        </div>
+
+        <div class="form-group" style="text-align: center;">
+          <button id="save" name="save" class="btn btn-primary" type="submit">Save Settings</button>
+        </div>
+
+        <div class="form-group" style="padding-top: 0px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="flex: 1; text-align: left;">
+              <span class="help-block" id="fwinfo" style="margin: 0;"></span>
+            </div>
+            <div id="nrAtt" style="display:none">
+              <a href="https://www.nationalrail.co.uk" target="_blank"><img src="/nrelogo.webp" alt="Logo" style="max-height: 40px;"></a>
+            </div>
+            <div id="btAtt" style="display:none">
+              <a href="https://bustimes.org/" target="_blank"><img src="/btlogo.webp" alt="Logo" style="max-height: 40px;"></a>
+            </div>
+          </div>
+          <hr style="margin: 10px 0;">
+          <span class="help-block text-center">&copy; 2026 Gadec Software. This work is licensed under <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">Creative Commons Attribution-NonCommercial-ShareAlike 4.0</a>. Any commercial use of this work, including reselling in kit or assembled form, is prohibited.</span>
+        </div>
+      </fieldset>
+    </form>
+  </div>
+
+  <script>
+    const appState = {
+      stationSelected: false,
+      stationName: "",
+      stationCRS: "",
+      stationLatitude: 0,
+      stationLongitude: 0,
+      platformFilter: "",
+      platformFilterOK: true,
+      busName: "",
+      busId: "",
+      busLat: 0,
+      busLon: 0,
+      busIdOK: false,
+      busFilter: "",
+      busFilterOK: true,
+      boardMode: 0, //0=Rail, 1=Bus
+      stationLatitude: 0,
+      stationLongitude: 0,
+      callingStationSelected: false,
+      callingStation: "",
+      callingCrs: "",
+      tzOK: true,
+      hostnameOK: true,
+      needRestart: false,
+      firmwareVersion: "",
+      jsonSettings: {},
+      atcoHistory: []
+    };
+
+    const elements = {
+      form: document.getElementById("formsettings"),
+      searchName: document.getElementById("searchName"),
+      callingStation: document.getElementById("callingStation"),
+      platformFilter: document.getElementById("platformFilter"),
+      brightness: document.getElementById("brightness"),
+      saveButton: document.getElementById("save"),
+      clearButton: document.getElementById("clearFilter"),
+      fwinfo: document.getElementById("fwinfo"),
+      verifyAtcoButton: document.getElementById("verifyAtco"),
+      busAtco: document.getElementById("busAtco"),
+      busLongName: document.getElementById("busAtcoLongName"),
+      busFilter: document.getElementById("busFilter"),
+      clearHistoryButton: document.getElementById("clearHistory"),
+      busAtcoHistoryList: document.getElementById("busAtcoHistoryList"),
+      optFlip: document.getElementById("optFlip"),
+      optTZ: document.getElementById("optTZ"),
+      customTZ: document.getElementById("customTZ"),
+      optHost: document.getElementById("optHost"),
+      customHost: document.getElementById("customHost")
+    };
+
+    const busFilterError = "Please enter a valid list of bus services to filter on, or leave blank for all services.";
+    const platformFilterError = "Please enter a valid list of platforms to filter on, or leave blank for all services.";
+    const tzError = "Please enter a valid POSIX format timezone string or uncheck the \"Custom timezone\" option to use UK time.";
+    const hostnameError = "Please enter a valid hostname or uncheck the \"Custom hostname\" option to use the default \"TinyDeparturesBoard\".";
+    const MAX_BUS_ATCOS = 10;
+
+    async function fetchAtcoHistory() {
+      try {
+        const response = await fetch('/atco-history.json');
+        if (!response.ok) {
+          return;
+        }
+        appState.atcoHistory =  await response.json();
+        renderAtcoHistory();
+      } catch {
+        return;
+      }
+    }
+
+    async function saveRecentBusAtco(atco, name, lat, lon) {
+      const currentList = appState.atcoHistory;
+      const alreadyExists = currentList.some(item => item.atco === atco);
+      if (alreadyExists) return;
+
+      list = [...currentList];
+      list.unshift({ atco, name, lat, lon });
+      list = list.slice(0, MAX_BUS_ATCOS);
+      appState.atcoHistory = list;
+
+      try {
+        const blob = new Blob(
+          [JSON.stringify(list, null, 2)],
+          { type: 'application/json' }
+        );
+
+        const formData = new FormData();
+        formData.append('file', blob, 'atco-history.json');
+
+        const response = await fetch('/upload', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) {
+          alert("Failed to save ATCO history to board.");
+          return;
+        }
+      } catch (err) {
+        alert("Failed to upload ATCO history: " + err.message);
+      }
+      renderAtcoHistory();
+    }
+
+    function findSavedBusAtco(atco) {
+      const list = appState.atcoHistory;
+      return list.find(item => item.atco === atco) || null;
+    }
+
+    function renderAtcoHistory() {
+      const list = appState.atcoHistory;
+      if (!list.length) {
+        show("busAtcoHistory",false);
+        return;
+      }
+
+      const datalist = document.getElementById("busAtcoHistoryList");
+      datalist.innerHTML = "";
+      const option = document.createElement("option");
+      option.value = "";
+      option.label = "Select a recent ATCO code...";
+      datalist.appendChild(option);
+
+      list.forEach(item => {
+        const option = document.createElement("option");
+        option.value = item.atco;
+        option.label = item.name + " (" + item.atco + ")";
+        datalist.appendChild(option);
+      });
+      show("busAtcoHistory",true);
+    }
+
+    function handleAtcoHistorySelect() {
+      const atco = elements.busAtcoHistoryList.value;
+      const saved = findSavedBusAtco(atco);
+
+      if (!saved) return;
+
+      elements.busAtco.value = saved.atco;
+      appState.busId = saved.atco;
+      appState.busName = saved.name;
+      appState.busLat = saved.lat;
+      appState.busLon = saved.lon;
+      appState.busIdOK = true;
+
+      elements.busLongName.innerHTML = "Location: <b>" + saved.name + "</b>";
+      elements.saveButton.removeAttribute("disabled");
+      toggleBusFilterBox();
+    }
+
+    async function handleClearHistory() {
+        try {
+          const response = await fetch('/del?f=/atco-history.json');
+        } catch {}
+        appState.atcoHistory = [];
+        renderAtcoHistory();
+    }
+
+    function validateCSVFilter(input,errorMessage) {
+      const trimmed = input.trim();
+
+      if (!trimmed.length) {
+        return {
+          ok: true,
+          value: ""
+        };
+      }
+
+      if (trimmed.includes('"')) {
+        alert('Double quotes (") are not allowed in the platform/bus service filters.');
+        return {
+          ok: false
+        };
+      }
+
+      const csvRegex = /^[^,\s]+(\s*,\s*[^,\s]+)*$/;
+      if (!csvRegex.test(trimmed)) {
+        alert(errorMessage);
+        return {
+          ok: false
+        };
+      }
+
+      return {
+        ok: true,
+        value: trimmed
+      };
+    }
+
+    function validatePlatformFilter() {
+      const input = elements.platformFilter.value;
+      const result = validateCSVFilter(input,platformFilterError);
+      if (!result.ok) appState.platformFilterOK = false;
+      else {
+        appState.platformFilterOK = true;
+        appState.platformFilter = result.value;
+      }
+    }
+
+    function validateBusFilter() {
+      const input = elements.busFilter.value;
+      const result = validateCSVFilter(input,busFilterError);
+      if (!result.ok) appState.busFilterOK = false;
+      else {
+        appState.busFilterOK = true;
+        appState.busFilter = result.value;
+      }
+    }
+
+    function validateTZ() {
+        const regex = /^([A-Za-z]{3,})([+-]?(?:[0-9]|1[0-4])(?::[0-5][0-9])?(?::[0-5][0-9])?)?([A-Za-z]{3,})?(?:,M(0?[1-9]|1[0-2])\.(?:[1-4]|5)\.[0-6](?:\/(?:[0-9]|1[0-9]|2[0-4]))?,M(0?[1-9]|1[0-2])\.(?:[1-4]|5)\.[0-6](?:\/(?:[0-9]|1[0-9]|2[0-4]))?)?$/;
+        const value = elements.customTZ.value.trim();
+        appState.tzOK = true;
+        if (!value.length) return;
+        if (regex.test(value)) return;
+        appState.tzOK = false;
+        alert(tzError);
+    }
+
+    function validateHostname() {
+        const regex = /^(?!-)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+        const value = elements.customHost.value.trim();
+        appState.hostnameOK = true;
+        if (!value.length) return;
+        if (regex.test(value)) return;
+        appState.hostnameOK = false;
+        alert(hostnameError);
+    }
+
+    const substringMatcher = () => {
+      return (q, cb) => {
+        if (q.length > 2) {
+          $.ajax({
+            url: '/stationpicker?q=' + encodeURIComponent(q),
+            method: 'GET',
+            success: function(data) {
+              const stations = data.payload.stations.filter(s => s.kbState !== 0);
+              cb(stations);
+            },
+            error: function(xhr, status, error) {
+              console.error(`Station fetch failed: ${status} - ${error}`);
+              cb([]);
+            }
+          });
+        } else {
+          cb([]);
+        }
+      };
+    };
+
+    $(elements.searchName).typeahead({
+      name: 'stations',
+      source: substringMatcher(),
+      updater: function(item) {
+        handleStationSelected(item);
+        return item;
+      },
+      highlighter: function(item) {
+        return '<img src="/nr.webp" style="margin-right:6px">' + item;
+      }
+    });
+
+    $(elements.callingStation).typeahead({
+      name: 'stations',
+      source: substringMatcher(),
+      updater: function(item) {
+        handleCallingStationSelected(item);
+        return item;
+      },
+      highlighter: function(item) {
+        return '<img src="/nr.webp" style="margin-right:6px">' + item;
+      }
+    });
+
+    // Prevent default submit and call handleSave only once
+    elements.form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (!appState.busFilterOK) alert(busFilterError);
+      else if (!appState.platformFilterOK) alert(platformFilterError);
+      else if (!appState.tzOK) alert(tzError);
+      else if (!appState.hostnameOK) alert(hostnameError);
+      else handleSave();
+    });
+
+    elements.searchName.addEventListener("focus", () => elements.searchName.select());
+    elements.searchName.addEventListener("blur", () => setTimeout(handleStationLostFocus, 500));
+    elements.callingStation.addEventListener("focus", () => elements.callingStation.select());
+    elements.callingStation.addEventListener("blur", () => setTimeout(handleCallingStationLostFocus, 500));
+    elements.platformFilter.addEventListener("blur", validatePlatformFilter);
+    elements.brightness.addEventListener("change", handleBrightnessChange);
+    elements.clearButton.addEventListener("click", handleClearFilter);
+    elements.verifyAtcoButton.addEventListener("click", handleVerifyAtco);
+    elements.clearHistoryButton.addEventListener("click", handleClearHistory);
+    elements.busAtcoHistoryList.addEventListener('change', handleAtcoHistorySelect);
+    elements.busFilter.addEventListener("blur", validateBusFilter);
+    elements.optTZ.addEventListener("change", () => {show("customTZbox",isChecked("optTZ")); if (!isChecked("optTZ")) {elements.customTZ.value = ""; appState.tzOK=true;}});
+    elements.customTZ.addEventListener("blur",validateTZ);
+    elements.optHost.addEventListener("change", () => {show("customHostbox",isChecked("optHost")); if (!isChecked("optHost")) {elements.customHost.value = ""; appState.hostnameOK=true;}});
+    elements.customHost.addEventListener("blur",validateHostname);
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      await fetchConfig();
+      await fetchFirmware();
+      await fetchApiKeys();
+      await fetchAtcoHistory();
+    });
+
+    $("input[name=boardmode]").on("change", function(){
+        appState.boardMode = parseInt(this.value);
+        applyBoardMode();
+    });
+
+    async function fetchConfig() {
+      try {
+        const response = await fetch('/config.json');
+        if (!response.ok) throw new Error("Failed to fetch config.");
+        appState.jsonSettings = await response.json();
+        loadSettings();
+      } catch (err) {
+        alert(`Error loading config: ${err.message}`);
+      }
+    }
+
+    async function fetchFirmware() {
+      try {
+        const response = await fetch('/firmware');
+        if (!response.ok) return;
+        const contentType = response.headers.get("Content-Type");
+        if (contentType === "application/json") {
+          const jsonInfo = await response.json();
+          appState.firmwareVersion = jsonInfo.firmware || "";
+          elements.fwinfo.innerHTML = '<a href="https://github.com/gadec-uk/tiny-departures-board#readme" target="_blank">Firmware: ' + appState.firmwareVersion + '</a>';
+        }
+      } catch (err) {
+        console.error("Firmware fetch error:", err);
+      }
+    }
+
+    async function fetchApiKeys() {
+      try {
+        const response = await fetch('/apikeys.json');
+        const data = await response.json();
+        if (!data.owmToken) {
+          $('#enableWeather').prop('disabled', true).prop('checked', false);
+        }
+        if (!data.nrToken || data.nrToken.length!=36) {
+          show("modeSelector",false);
+          appState.boardMode = 1;
+          applyBoardMode();
+        }
+      } catch (err) {
+        console.warn("Could not load api keys.");
+      }
+    }
+
+    async function getBusStopName(busId) {
+        try {
+            const response = await fetch(`https://bustimes.org/api/stops/${busId}`);
+
+            if (!response.ok) {
+                // HTTP error returned when invalid Atco
+                appState.busName = "";
+                appState.busLat = 0;
+                appState.busLon = 0;
+                return false;
+            }
+
+            const data = await response.json();
+            appState.busName = data.long_name ?? "";
+            if (Array.isArray(data.location) && data.location.length === 2) {
+                appState.busLon = data.location[0];
+                appState.busLat = data.location[1];
+            } else {
+                appState.busLat = 0;
+                appState.busLon = 0;
+            }
+            return true;
+
+        } catch (error) {
+            // Network or other fetch error
+            console.error("Error fetching bus stop data:", error);
+            appState.busName = "";
+            appState.busLat = 0;
+            appState.busLon = 0;
+            return false;
+        }
+    }
+
+    async function handleVerifyAtco() {
+        const userAtco = elements.busAtco.value.trim();
+        const success = await getBusStopName(userAtco);
+        if (success) {
+          appState.busId = userAtco;
+          appState.busIdOK = true;
+          elements.busLongName.innerHTML = "Location: <b>" + appState.busName + "</b>";
+          saveRecentBusAtco(userAtco, appState.busName, appState.busLat, appState.busLon);
+          elements.saveButton.removeAttribute("disabled");
+          toggleBusFilterBox();
+        } else {
+          elements.saveButton.setAttribute("disabled", true);
+          elements.busLongName.innerHTML = "";
+          appState.busIdOK = false;
+          toggleBusFilterBox();
+          alert("The Bus Stop ATCO code you entered could not be found.");
+        }
+    }
+
+    function toggleBusFilterBox() {
+      show("busFilterBox",appState.busIdOK);
+    }
+
+    function applyBoardMode() {
+        const mode = appState.boardMode;
+
+        const rail = (mode === 0);
+        const bus  = (mode === 1);
+
+        show("nrT", rail);
+        show("nrSearchBox", rail);
+        show("nrCallingBox", rail);
+        show("nrAtt", rail);
+        show("optBuses", rail);
+        show("optWeather", rail || bus);
+        show("optFastRefresh", rail);
+        show("optNoScroll", rail);
+
+        show("busT", bus);
+        show("busAtcoBox", bus);
+        show("btAtt",bus);
+        if (bus) renderAtcoHistory();
+
+        if (
+            (rail && appState.stationName) ||
+            (bus && appState.busIdOK)
+        ) {
+            elements.saveButton.removeAttribute("disabled");
+        } else {
+            elements.saveButton.setAttribute("disabled", true);
+        }
+        highlightModeButtons(mode);
+    }
+
+    function highlightModeButtons(mode){
+        $("#btnRail").toggleClass("active", mode===0);
+        $("#btnBus").toggleClass("active", mode===1);
+    }
+
+    function validateAtcoFormat() {
+        const atcoPattern = /^\d{3}0.{1,}$/;
+        const atcoVal  = $('#busAtco').val().trim();
+        const atcoEntered  = atcoVal.length > 0;
+        const atcoValid  = !atcoEntered  || atcoPattern.test(atcoVal);
+        $('#verifyAtco').prop('disabled', !atcoValid);
+    }
+
+    $('#busAtco').on('input', function () {
+        validateAtcoFormat();
+        elements.saveButton.setAttribute("disabled", true);
+        elements.busLongName.innerHTML="";
+        appState.busIdOK = false;
+        toggleBusFilterBox();
+    });
+
+    function loadSettings() {
+      const s = appState.jsonSettings;
+      appState.stationName = s.station || "";
+      appState.stationCRS = s.crs || "";
+      appState.stationLatitude = s.lat || 0;
+      appState.stationLongitude = s.lon || 0;
+
+      appState.callingStation = s.callingStation || "";
+      appState.callingCrs = s.callingCrs || "";
+      appState.platformFilter = s.platformFilter || "";
+
+      appState.busId = s.busId || "";
+      appState.busName = s.busName || "";
+      appState.busLat = s.busLat || 0;
+      appState.busLon = s.busLon || 0;
+      appState.busIdOK = appState.busId.length > 0 && appState.busName.length > 0;
+      appState.busFilter = s.busFilter || "";
+      appState.boardMode = s.mode ?? 0;
+      highlightModeButtons(appState.boardMode);
+      applyBoardMode();
+      elements.searchName.value = appState.stationName;
+      elements.callingStation.value = appState.callingStation;
+      elements.platformFilter.value = appState.platformFilter;
+      elements.busAtco.value = appState.busId;
+      elements.busFilter.value = appState.busFilter;
+      elements.brightness.value = s.brightness || 50;
+      const pct = (elements.brightness.value/255)*100;
+      elements.brightness.title = Math.round(pct) + "%";
+
+      if (appState.busName.length) elements.busLongName.innerHTML = "Location: <b>" + appState.busName + "</b>";
+      toggleBusFilterBox();
+      elements.customTZ.value = s.TZ || "";
+      setCheckbox("optTZ", elements.customTZ.value.length);
+      show("customTZbox", elements.customTZ.value.length);
+
+      elements.customHost.value = s.hostname || "";
+      setCheckbox("optHost", elements.customHost.value.length);
+      show("customHostbox", elements.customHost.value.length);
+
+      setCheckbox("enableBuses", s.showBus);
+      setCheckbox("enableFirmware", s.update);
+      setCheckbox("enableWeather", s.weather);
+      setCheckbox("enableFastRefresh", s.fastRefresh);
+      setCheckbox("noScrolling", s.noScroll);
+      setCheckbox("optFlip", s.flip);
+    }
+
+    function setCheckbox(id, value) {
+      document.getElementById(id).checked = !!value;
+    }
+
+    function handleStationSelected(item) {
+      appState.stationSelected = true;
+      appState.stationName = item.name;
+      appState.stationCRS = item.crsCode;
+      appState.stationLatitude = item.latitude;
+      appState.stationLongitude = item.longitude;
+
+      if (item.classification === "LONDON_UNDERGROUND") {
+        elements.saveButton.setAttribute("disabled", true);
+      } else {
+        elements.saveButton.removeAttribute("disabled");
+      }
+    }
+
+    function handleCallingStationSelected(item) {
+      appState.callingStationSelected = true;
+      appState.callingStation = item.name;
+      appState.callingCrs = item.crsCode;
+    }
+
+    function handleStationLostFocus() {
+      if (!appState.stationSelected) {
+        elements.searchName.value = appState.stationName;
+      } else {
+        appState.stationSelected = false;
+      }
+    }
+
+    function handleCallingStationLostFocus() {
+      if (!appState.callingStationSelected) {
+        elements.callingStation.value = appState.callingStation;
+      } else {
+        appState.callingStationSelected = false;
+      }
+    }
+
+    function handleClearFilter() {
+      appState.callingCrs = "";
+      appState.callingStation = "";
+      appState.callingStationSelected = false;
+      elements.callingStation.value = appState.callingStation;
+    }
+
+    function handleBrightnessChange() {
+      const brightness = this.value;
+      appState.jsonSettings.brightness = brightness;
+      fetch(`/brightness?b=${brightness}`);
+      const pct = (brightness/255)*100;
+      this.title = Math.round(pct) + "%";
+    }
+
+    async function handleSave() {
+      const s = appState.jsonSettings;
+      if ((s.hostname || "") != elements.customHost.value.trim()) appState.needRestart = true;
+      s.station = appState.stationName;
+      s.crs = appState.stationCRS;
+      s.lat = appState.stationLatitude;
+      s.lon = appState.stationLongitude;
+      s.callingStation = appState.callingStation;
+      s.callingCrs = appState.callingCrs;
+      s.platformFilter = appState.platformFilter;
+      s.mode = appState.boardMode;
+      s.brightness = elements.brightness.value;
+      s.showBus = isChecked("enableBuses");
+      s.update = isChecked("enableFirmware");
+      s.weather = isChecked("enableWeather");
+      s.fastRefresh = isChecked("enableFastRefresh");
+      s.noScroll = isChecked("noScrolling");
+      s.flip = isChecked("optFlip");
+      if (appState.busIdOK) {
+        s.busName = appState.busName;
+        s.busId = appState.busId;
+        s.busLat = appState.busLat;
+        s.busLon = appState.busLon;
+        s.busFilter = appState.busFilter;
+      }
+      if (isChecked("optTZ") && elements.customTZ.value.trim().length) s.TZ = elements.customTZ.value.trim(); else delete s.TZ;
+      if (isChecked("optHost") && elements.customHost.value.trim().length) s.hostname = elements.customHost.value.trim(); else delete s.hostname;
+      try {
+        const response = await fetch(`/savesettings${appState.needRestart ? '?reboot=1' : ''}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(s)
+        });
+
+        const text = await response.text();
+        alert(text);
+
+      } catch (err) {
+        alert(`Failed to save settings: ${err.message}`);
+      }
+    }
+
+    function isChecked(id) {
+      return document.getElementById(id).checked;
+    }
+
+    function show(id,showme) {
+      if (showme) document.getElementById(id).style.display = "block";
+      else document.getElementById(id).style.display = "none";
+    }
+
+    // Menu handlers
+    async function handleCheckUpdates() {
+      try {
+        const response = await fetch("https://api.github.com/repos/gadec-uk/tiny-departures-board/releases/latest");
+        if (!response.ok) throw new Error("Failed to fetch the latest release information from GitHub.");
+
+        const data = await response.json();
+        const latestTag = data.tag_name;
+        const currentTag = appState.firmwareVersion;
+        const latestDesc = data.name;
+
+        if (!latestTag || !currentTag) {
+          alert("Could not compare firmware versions.");
+          return;
+        }
+
+        const parseVersion = (str) => {
+          const match = str.match(/B(\d+)\.(\d+)-W(\d+)\.(\d+)/);
+          return match
+            ? {
+                B: { major: Number(match[1]), minor: Number(match[2]) },
+                W: { major: Number(match[3]), minor: Number(match[4]) }
+              }
+            : null;
+        };
+
+        const isNewer = (latest, current) => {
+          if (latest.major !== current.major) {
+            return latest.major > current.major;
+          }
+          return latest.minor > current.minor;
+        };
+
+        const latest = parseVersion(latestTag);
+        const current = parseVersion(currentTag);
+
+        if (!latest || !current) {
+          alert("Firmware version format invalid.");
+          return;
+        }
+
+        if (isNewer(latest.B, current.B) || isNewer(latest.W, current.W)) {
+          if (confirm(`An update to version ${latestTag} is available.\n\nBrief description: "${latestDesc}".\n\nClick \'OK\' to install the update now or \'Cancel\' to abort.`)) {
+            fetch('/ota', { method: 'GET' })
+              .then(res => res.text())
+              .then(msg => alert(msg))
+              .catch(err => alert('Error initiating update: ' + err.message));
+          }
+        } else {
+          alert("No updates available. You are using the latest version.");
+        }
+
+      } catch (err) {
+        console.error(err);
+        alert("Error checking for updates: " + err.message);
+      }
+    }
+
+    function handleClearWifi() {
+      if (confirm('Are you sure you want to clear WiFi settings?')) {
+        fetch('/erasewifi', { method: 'GET' })
+          .then(res => res.text())
+          .then(msg => alert(msg))
+          .catch(err => alert('Error clearing WiFi: ' + err.message));
+      }
+    }
+
+    function handleRestartSystem() {
+      if (confirm('Are you sure you want to restart the system?')) {
+        fetch('/reboot', { method: 'GET' })
+          .then(res => res.text())
+          .then(msg => alert(msg))
+          .catch(err => alert('Error restarting system: ' + err.message));
+      }
+    }
+
+    function handleShowTestCard() {
+      fetch('/testcard', { method: 'GET' })
+        .then(res => res.text())
+        .then(msg => alert(msg))
+        .catch(err => alert('Error activating alignment pattern: ' + err.message));
+    }
+
+  </script>
+</body>
+</html>
