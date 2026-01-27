@@ -84,7 +84,7 @@ At start-up, the ESP32's IP address is displayed. To change the station or to co
 - **Only show these Bus services** - filter buses by service numbers (enter a list of the service numbers, comma separated).
 - **Recently verfied ATCO codes** - quickly select from recently used bus stop ATCO codes.
 - **Brightness** - adjusts the brightness of the OLED screen.
-- **Include Bus services** - optionally include bus replacement services (National Rail mode).
+- **Include bus replacement services** - optionally include bus replacement services (National Rail mode).
 - **Include current weather at location** - this option requires a valid OpenWeather Map API key (National Rail/Bus mode).
 - **Increase API refresh rate** - reduces the interval between data refreshes (National Rail mode). Uses more data and is not usually required.
 - **Suppress calling at / information messages** - removes all horizontally scrolling text (much lower functionality but less distracting).
