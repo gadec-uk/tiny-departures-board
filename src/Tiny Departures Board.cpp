@@ -1338,13 +1338,13 @@ void handleStreamFlashFile(String filename, const uint8_t *filedata, size_t cont
 
 // Save the API keys POSTed from the keys.htm page
 // If an OWM key is passed, this is tested before being committed to the file system. It's not possible
-// to check the National Rail or TfL tokens at this point.
+// to check the National Rail token at this point.
 //
 void handleSaveKeys() {
   String newJSON, owmToken, nrToken;
   JsonDocument doc;
   bool result = true;
-  String msg = F("API keys saved successfully. The system will now restart.");
+  String msg = F("API keys saved successfully.");
 
   if ((server.method() == HTTP_POST) && (server.hasArg("plain"))) {
     newJSON = server.arg("plain");
@@ -1368,7 +1368,7 @@ void handleSaveKeys() {
           result = false;
         } else {
           nrToken = settings[F("nrToken")].as<String>();
-          if (!nrToken.length()) msg+=F(" Note: only Bus Departures will be available without a National Rail token.");
+          if (!nrToken.length()) msg+=F("\n\nNote: Only Bus Departures will be available without a National Rail token.");
         }
       }
     } else {
@@ -1380,10 +1380,11 @@ void handleSaveKeys() {
       loadApiKeys();
       // If all location codes are blank we're in the setup process. If not, the keys have been changed so just reboot.
       if (!crsCode[0] && !busAtco[0]) {
-        sendResponse(200,F("API keys saved successfully!"));
+        sendResponse(200,msg);
         writeDefaultConfig();
         showSetupCrsHelpScreen();
       } else {
+        msg += F("\n\nThe system will now restart.");
         sendResponse(200,msg);
         delay(500);
         ESP.restart();
