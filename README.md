@@ -2,7 +2,7 @@
 
 This is an tiny (00 gauge model railway size) live Departures Board replicating those at many UK railway stations (using data provided by National Rail's public API) and UK wide bus stops (using data provided by bustimes.org). This implementation uses a 0.91" OLED display panel with SSD1306 display controller onboard, driven by an ESP32-C3 SuperMini processor board. STL files are also provided for 3D printing the custom case. A small number of pre-assembled departure boards are also available exclusively from our [store](https://store.gadec.co.uk).
 
-This project is based on the Desktop Departures Board available [here](https://github.com/gadec-uk/departures-board)
+This project is based on the table top Departures Board available [here](https://github.com/gadec-uk/departures-board)
 
 ## Features
 * All processing is done onboard by the ESP32-C3 processor
