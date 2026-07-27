@@ -1,5 +1,5 @@
 /*
- * Tiny Departures Board (c) 2026 Gadec Software
+ * Departures Board (c) 2025-2026 Gadec Software
  *
  * GitHub Client Library - enables checking for latest release and downloading assets to file system
  *
@@ -10,39 +10,38 @@
  */
 
 #include <githubClient.h>
-#include <JsonListener.h>
+#include <JsonListenerGS.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <LittleFS.h>
 #include <md5Utils.h>
 
-github::github(String token) {
-    accessToken = token;            // Initialise with a GitHub token if the repository is private
-}
+github::github(sharedBufferSpace *sharedBuffer) : js(sharedBuffer) {}
 
-bool github::getLatestRelease() {
+int github::getLatestRelease() {
 
-    lastErrorMsg = "";
-    JsonStreamingParser parser;
+    js->lastResultMessage[0] = '\0';
+    JsonStreamingParserGS parser;
     parser.setListener(this);
     WiFiClientSecure httpsClient;
 
     httpsClient.setInsecure();
-    httpsClient.setTimeout(15000);
+    httpsClient.setTimeout(5000);
+    httpsClient.setConnectionTimeout(5000);
 
     int retryCounter=0; //retry counter
-    while((!httpsClient.connect(apiHost, 443)) && (retryCounter < 30)){
+    while((!httpsClient.connect(GITHUBAPIHOST, 443)) && (retryCounter < 10)) {
         delay(200);
         retryCounter++;
     }
-    if(retryCounter>=30) {
-        lastErrorMsg += F("Connection timeout");
-        return false;
+    if(retryCounter>=10) {
+        strcpy(js->lastResultMessage,"Error: GH Connect timed out");
+        return UPD_NO_RESPONSE;
     }
 
-    String request = "GET "+ String(apiGetLatestRelease) + F(" HTTP/1.0\r\nHost: ") + String(apiHost) + F("\r\nuser-agent: esp32/1.0\r\nX-GitHub-Api-Version: 2022-11-28\r\nAccept: application/vnd.github+json\r\n");
-    if (accessToken.length()) request += "Authorization: Bearer " + String(accessToken) + F("\r\n");
-    request += F("Connection: close\r\n\r\n");
+    String request = "GET " GITHUBREPOPATH " HTTP/1.0\r\nHost: " GITHUBAPIHOST "\r\nuser-agent: esp32/1.0\r\nX-GitHub-Api-Version: 2022-11-28\r\nAccept: application/vnd.github+json\r\n";
+    if (strlen(GITHUBTOKEN)) request += "Authorization: Bearer " GITHUBTOKEN "\r\nConnection: close\r\n\r\n";
+    else request += "Connection: close\r\n\r\n";
 
     httpsClient.print(request);
     retryCounter=0;
@@ -52,8 +51,8 @@ bool github::getLatestRelease() {
         if (retryCounter > 25) {
             // no response within 5 seconds so quit
             httpsClient.stop();
-            lastErrorMsg += F("Response timeout");
-            return false;
+            strcpy(js->lastResultMessage,"Error: GH GET timed out");
+            return UPD_TIMEOUT;
         }
     }
 
@@ -62,9 +61,15 @@ bool github::getLatestRelease() {
         // check for success code...
         if (line.startsWith("HTTP")) {
             if (line.indexOf("200 OK") == -1) {
-            httpsClient.stop();
-            lastErrorMsg += line;
-            return false;
+                httpsClient.stop();
+                strlcpy(js->lastResultMessage,line.c_str(),sizeof(js->lastResultMessage));
+                if (line.indexOf("401") > 0) {
+                    return UPD_UNAUTHORISED;
+                } else if (line.indexOf("500") > 0) {
+                    return UPD_DATA_ERROR;
+                } else {
+                    return UPD_HTTP_ERROR;
+                }
             }
         }
         if (line == "\r") {
@@ -77,7 +82,7 @@ bool github::getLatestRelease() {
     char c;
     releaseId="";
     releaseDescription="";
-    releaseAssets=0;
+    firmwareURL="";
     unsigned long dataReceived = 0;
 
     unsigned long dataSendTimeout = millis() + 12000UL;
@@ -88,161 +93,63 @@ bool github::getLatestRelease() {
             if (c == '{' || c == '[') isBody = true;
             if (isBody) parser.parse(c);
         }
-        delay(50);
+        delay(5);
     }
     httpsClient.stop();
     if (millis() >= dataSendTimeout) {
-        lastErrorMsg += "Data timeout (" + String(dataReceived) + F(" bytes)");
-        return false;
+        sprintf(js->lastResultMessage,"Error: GH Timeout after %d bytes",dataReceived);
+        return UPD_TIMEOUT;
     }
 
-    lastErrorMsg=F("SUCCESS");
-
-    return true;
-}
-
-/*
-bool github::downloadAssetToLittleFS(String url, String filename) {
-
-    HTTPClient http;
-    WiFiClientSecure client;
-    bool result = true;
-    int redirectCount = 0;
-    const int maxRedirects = 5;
-
-    lastErrorMsg = "";
-    LittleFS.remove(F("/tempfile"));  // delete any leftover temp file
-
-    client.setInsecure();
-
-    File f = LittleFS.open(F("/tempfile"), "w");
-    if (!f) {
-        lastErrorMsg = F("Failed to create temp file");
-        return false;
+    if (firmwareURL=="") {
+        // Failed to find firmware.bin in the release assets
+        strcpy(js->lastResultMessage,"No firmware.bin found in release assets");
+        return UPD_INCOMPLETE;
     }
-
-    while (redirectCount < maxRedirects) {
-        http.begin(client, url);
-        http.addHeader(F("Accept"), F("application/octet-stream"));
-        if (accessToken.length()) http.addHeader(F("Authorization"), "Bearer " + accessToken);
-        http.addHeader(F("X-GitHub-Api-Version"), F("2022-11-28"));
-        http.addHeader(F("user-agent"), F("esp32/1.0"));
-        const char * headerkeys[] = { "x-ms-blob-content-md5" };    // GitHub uses x-ms-blob-content-m5d, not x-md5
-        size_t headerkeyssize = sizeof(headerkeys) / sizeof(char*);
-        // track the MD5 hash
-        http.collectHeaders(headerkeys, headerkeyssize);
-
-        int httpCode = http.GET();
-        if (httpCode == HTTP_CODE_OK) {
-            int res = http.writeToStream(&f);
-            if (res <= 0) {
-                lastErrorMsg = "WriteToStream failed. Error: " + http.errorToString(res);
-                result = false;
-            }
-            http.end();
-            break;
-        } else if (httpCode == HTTP_CODE_MOVED_PERMANENTLY ||
-                   httpCode == HTTP_CODE_FOUND ||
-                   httpCode == HTTP_CODE_TEMPORARY_REDIRECT ||
-                   httpCode == HTTP_CODE_PERMANENT_REDIRECT) {
-            // Handle redirect
-            String newUrl = http.getLocation();
-            http.end();  // End current request before retrying
-            if (newUrl.length() == 0) {
-                lastErrorMsg = F("HTTP Redirect without Location header!");
-                result = false;
-                break;
-            }
-            url = newUrl;
-            redirectCount++;
-        } else {
-            lastErrorMsg = "GET failed, error: " + String(httpCode) + " " + http.errorToString(httpCode);
-            result = false;
-            http.end();
-            break;
-        }
-    }
-
-    f.close();
-
-    if (result) {
-        // File downloaded, let's check the MD5 if provided
-        if (http.hasHeader("x-ms-blob-content-md5")) {
-            // Convert the base64 encoded MD5 back to a hex string
-            String md5Server = md5.base64ToHex(String(http.header("x-ms-blob-content-md5")));
-            // Calculate the MD5 of the downloaded file
-            String md5Download = md5.calculateFileMD5("/tempfile");
-            if (md5Download != md5Server) {
-                lastErrorMsg = "\"" + filename.substring(1) + F("\" MD5 mismatch (corruption)");
-                return false;
-            }
-        }
-
-        // File downloaded so delete the old one
-        if (LittleFS.exists(filename)) {
-            if (!LittleFS.remove(filename)) {
-                lastErrorMsg = "Could not delete existing " + filename;
-                return false;
-            }
-        }
-
-        // Rename temp file
-        if (!LittleFS.rename("/tempfile", filename)) {
-            lastErrorMsg = F("Could not rename temp file");
-            return false;
-        }
-        LittleFS.remove(F("/tempfile"));
-        lastErrorMsg = F("Success");
-    }
-
-    return result;
-}
-*/
-
-String github::getLastError() {
-    return lastErrorMsg;
+    sprintf(js->lastResultMessage+strlen(js->lastResultMessage),"[GH] OK: UP D:%d",dataReceived);
+    return UPD_SUCCESS;
 }
 
 void github::whitespace(char c) {}
 
 void github::startDocument() {
-    currentArray = "";
-    currentObject = "";
+    js->currentPath[0] = '\0';
+    js->arrayName[0] = '\0';
+    js->objectCurrentKey[0] = '\0';
 }
 
-void github::key(String key) {
-    currentKey = key;
+void github::key(const char *key) {
+    strlcpy(js->currentKey,key,MAXKEYNAMESIZE);
 }
 
-void github::value(String value) {
-    if (currentKey == "tag_name") releaseId = value;
-    else if ((currentKey == "name") && (currentArray=="")) releaseDescription = value;
-    else if ((currentKey == "url") && (currentArray=="assets") && (currentObject!="uploader")) assetURL = value;
-    else if ((currentKey == "name") && (currentArray=="assets") && (currentObject!="uploader")) assetName = value;
+void github::value(const char *value) {
+    if (strcmp(js->currentKey, "tag_name")==0) releaseId = String(value);
+    else if (strcmp(js->currentKey, "name")==0 && !js->arrayName[0]) releaseDescription = String(value);
+    else if (strcmp(js->currentKey, "url")==0 && strcmp(js->arrayName, "assets")==0 && strcmp(js->objectCurrentKey, "uploader")) assetURL = String(value);
+    else if (strcmp(js->currentKey, "name")==0 && strcmp(js->arrayName, "assets")==0 && strcmp(js->objectCurrentKey, "uploader")) assetName = String(value);
 
-    if (assetURL.length() && assetName.length() && releaseAssets<MAX_RELEASE_ASSETS) {
-        // Save the full asset url to the list
-        releaseAssetURL[releaseAssets] = assetURL;
-        releaseAssetName[releaseAssets++] = assetName;
+    if (assetURL.length() && assetName == "firmware.bin") {
+        // found the firmware file, save the url
+        firmwareURL = assetURL;
         assetURL="";
         assetName="";
     }
 }
 
 void github::endArray() {
-    currentArray = "";
+    js->arrayName[0] = '\0';
 }
 
 void github::endObject() {
-    currentObject = "";
+    js->objectCurrentKey[0] = '\0';
 }
 
 void github::endDocument() {}
 
 void github::startArray() {
-    currentArray = currentKey;
+    strcpy(js->arrayName,js->currentKey);
 }
 
 void github::startObject() {
-    currentObject = currentKey;
+    strcpy(js->objectCurrentKey, js->currentKey);
 }

@@ -39,6 +39,7 @@ void xmlStreamingParser::setListener(xmlListener* listener) {
 
 void xmlStreamingParser::reset() {
     inAttrQuote=false;
+    cdataIndex = 0;
     ChangeState(STATE_BEGIN);
 }
 
@@ -59,11 +60,14 @@ void xmlStreamingParser::parse(const char character) {
         case STATE_ENDTAG:
             state_EndTag(character);
             break;
-        case STATE_EMPTYTAG:
-            state_EmptyTag(character);
-            break;
         case STATE_ATTRIBUTE:
             state_Attribute(character);
+            break;
+        case STATE_CDATA:
+            state_CDATA(character);
+            break;
+        case STATE_COMMENT:
+            state_Comment(character);
             break;
         default:
             break;
@@ -93,7 +97,39 @@ void  xmlStreamingParser::state_Begin(const char character) {
  *  and parse the tag name */
 void xmlStreamingParser::state_StartTag(const char character) {
 
-    if (bInitialize) bInitialize=false;
+    static const char cdataStart[] = "<![CDATA[";
+    static const char commentStart[] = "<!--";
+
+    if (bInitialize) {
+        bInitialize = false;
+        cdataIndex = 0;
+        cdataMatch[cdataIndex++] = '<';   // '<' already consumed
+    }
+
+    // Accumulate possible special sequence
+    cdataMatch[cdataIndex++] = character;
+    cdataMatch[cdataIndex] = '\0';
+
+    // Check for CDATA
+    if (strncmp(cdataMatch, cdataStart, cdataIndex) == 0) {
+        if (cdataIndex == 9) {
+            length = 0;
+            buffer[length] = '\0';
+            ChangeState(STATE_CDATA);
+        }
+        return;
+    }
+
+    // Check for comment
+    if (strncmp(cdataMatch, commentStart, cdataIndex) == 0) {
+        if (cdataIndex == 4) {
+            ChangeState(STATE_COMMENT);
+        }
+        return;
+    }
+
+    // Not a special tag (CDATA or comment)
+    cdataIndex = 0;
 
     switch(character)
     {
@@ -117,59 +153,53 @@ void xmlStreamingParser::state_StartTag(const char character) {
 
 void xmlStreamingParser::state_TagName(const char character) {
 
+    static bool sawSlash = false;
     nextState = STATE_NULL;
-    if(bInitialize)
-    {
-        /* Expect one character in the buffer; the start of the tag name from the previous state*/
+
+    if (bInitialize) {
         bInitialize = false;
+        sawSlash = false;
     }
 
-    switch(character)
+    switch (character)
     {
         case ' ': case '\r': case '\n': case '\t':
-            /* Tag name complete, whitespace indicates tag attribute */
             nextState = STATE_ATTRIBUTE;
             break;
+
         case '/':
-            nextState = STATE_EMPTYTAG;    // workaround for urls
+            // Possible empty tag; wait to see '>'
+            sawSlash = true;
             break;
+
         case '>':
-            nextState = STATE_TAGCONTENTS;
-            /* Done with tag, contents may follow */
+            if (sawSlash) {
+                // Self-closing tag without attributes
+                // startTag already emitted below
+                nextState = STATE_TAGCONTENTS;
+            } else {
+                nextState = STATE_TAGCONTENTS;
+            }
             break;
+
         default:
+            if (sawSlash) {
+                // '/' was actually part of tag name
+                ContextBufferAddChar('/');
+                sawSlash = false;
+            }
             ContextBufferAddChar(character);
             break;
     }
 
-    if(nextState != STATE_NULL)
-    {
-        if (length>0) { length++; myListener->startTag(buffer);}
-        ChangeState(nextState);
-    }
-}
+    if (nextState != STATE_NULL) {
+        if (length > 0) {
+            // Copy tag name for later endTag (empty tags)
+            //strcpy(currentTagName, buffer);
 
-void xmlStreamingParser::state_EmptyTag(const char character) {
-    nextState = STATE_NULL;
-
-    if(bInitialize)
-    {
-        /* We need to keep the buffer as-is, since it contains the tag name */
-        bInitialize = false;
-    }
-
-    switch(character)
-    {
-        case '>':
-            nextState = STATE_TAGCONTENTS;
-            break;
-        default:
-            break;
-    }
-
-    if(nextState != STATE_NULL)
-    {
-        if (length>0) { length++; myListener->endTag(buffer); }
+            // Emit startTag exactly once here
+            myListener->startTag(buffer);
+        }
         ChangeState(nextState);
     }
 }
@@ -187,8 +217,14 @@ void xmlStreamingParser::state_TagContents(const char character) {
     switch(character)
     {
         case '<':
-            nextState = STATE_STARTTAG;
-            break;
+            if (length>0) {
+                length++;
+                myListener->value(buffer);
+            }
+            cdataIndex = 0;
+            cdataMatch[cdataIndex++] = '<';
+            ChangeState(STATE_STARTTAG);
+            return;
         case ' ': case '\r': case '\n': case '\t':
             if(length == 0)
                 break; /* Ignore leading whitespace */
@@ -210,64 +246,70 @@ void xmlStreamingParser::state_TagContents(const char character) {
 }
 
 void xmlStreamingParser::state_Attribute(const char character) {
+
+    static bool sawSlash = false;
     nextState = STATE_NULL;
 
-    if(bInitialize)
-    {
+    if (bInitialize) {
         length = 0;
         buffer[length] = '\0';
+        inAttrQuote = false;
+        sawSlash = false;
         bInitialize = false;
     }
 
-    switch(character)
+    switch (character)
     {
         case ' ': case '\r': case '\n': case '\t':
-            if(length == 0)
-                break;
-            else
-                nextState = STATE_ATTRIBUTE;
+            if (!inAttrQuote && length > 0) {
+                myListener->attribute(buffer);
+                length = 0;
+                buffer[length] = '\0';
+            }
             break;
+
         case '\"':
             inAttrQuote = !inAttrQuote;
-            ContextBufferAddChar('\"');
+            ContextBufferAddChar(character);
             break;
+
         case '/':
             if (inAttrQuote) {
                 ContextBufferAddChar('/');
             } else {
-                /* Handle the case where an attribute is included in an empty tag,
-                and the attribute name/value has no trailing whitespace
-                prior to the empty tag terminator. */
-                if (length > 0) {
-                    myListener->attribute(buffer);
-                    length = 0;
-                    buffer[length] = '\0';
-                }
-                /* We've found an empty tag that contains at least one attribute.
-                Since the buffer containing the tag name is long-gone (the attribute
-                is now in the parser's string buffer), we don't have a way to get it
-                back. In order to generate a "tagEnd" event, store a dummy string
-                containing a single space character (which isn't a valid tag name),
-                which will be provided to the tagEndHandler callback. */
-                ContextBufferAddChar(' ');
-                nextState = STATE_EMPTYTAG;
+                sawSlash = true; // possible empty tag
             }
             break;
+
         case '>':
-            if (inAttrQuote) ContextBufferAddChar(character);
-            else nextState = STATE_TAGCONTENTS; /* Done with tag, contents may follow */
+            if (length > 0) {
+                myListener->attribute(buffer);
+                length = 0;
+                buffer[length] = '\0';
+            }
+
+            if (sawSlash) {
+                // SELF-CLOSING TAG
+                // Only emit endTag here (startTag already called)
+                // myListener->endTag(currentTagName);
+                myListener->endTag("");
+                sawSlash = false;
+            }
+
+            nextState = STATE_TAGCONTENTS;
             break;
+
         default:
+            if (sawSlash) {
+                // '/' was part of attribute value or name
+                ContextBufferAddChar('/');
+                sawSlash = false;
+            }
             ContextBufferAddChar(character);
             break;
     }
 
-    if(nextState != STATE_NULL)
-    {
-        if(nextState != STATE_EMPTYTAG)
-        {
-            if (length>0) { inAttrQuote=false; length++; myListener->attribute(buffer); }
-        }
+    if (nextState != STATE_NULL) {
         ChangeState(nextState);
     }
 }
@@ -304,6 +346,50 @@ void xmlStreamingParser::state_EndTag(const char character) {
         if (length>0) { length++; myListener->endTag(buffer); }
         ChangeState(nextState);
     }
+}
+
+void xmlStreamingParser::state_CDATA(const char character) {
+    static int endMatch = 0;
+    const char cdataEnd[] = "]]>";
+
+    if (character == cdataEnd[endMatch]) {
+        endMatch++;
+        if (endMatch == 3) {
+            // End of CDATA
+            if (length > 0) {
+                length++;
+                myListener->value(buffer);
+            }
+            endMatch = 0;
+            ChangeState(STATE_TAGCONTENTS);
+        }
+        return;
+    }
+
+    if (endMatch > 0) {
+        // Partial match failed; flush buffered ]
+        for (int i = 0; i < endMatch; i++) {
+            ContextBufferAddChar(']');
+        }
+        endMatch = 0;
+    }
+    if (character != '\r' && character != '\n') ContextBufferAddChar(character);
+}
+
+void xmlStreamingParser::state_Comment(const char character) {
+    static int endMatch = 0;
+    const char commentEnd[] = "-->";
+
+    if (character == commentEnd[endMatch]) {
+        endMatch++;
+        if (endMatch == 3) {
+            endMatch = 0;
+            ChangeState(STATE_TAGCONTENTS);
+        }
+        return;
+    }
+
+    endMatch = 0; // ignore everything
 }
 
 void xmlStreamingParser::ContextBufferAddChar(const char character) {

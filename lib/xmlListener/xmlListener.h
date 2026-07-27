@@ -1,5 +1,5 @@
 /*
- * Tiny Departures Board (c) 2026 Gadec Software
+ * Departures Board (c) 2025-2026 Gadec Software
  *
  * xmlListener Library
  *

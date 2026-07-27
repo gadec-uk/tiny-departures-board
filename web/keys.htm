@@ -1,9 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css" integrity="sha384-HSMxcRTRxnN+Bdg0JdbxYKrThecOKuH5zCYotlSAcp1+c8xmyTe9GYg1l9a69psu" crossorigin="anonymous">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/js/bootstrap.min.js" integrity="sha384-aJ21OjlMXNL5UyIl/XNwTMqvzeRMZH2w8c5cRVpzpU8Y5bApTppSuUkhZXN0VxHd" crossorigin="anonymous"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1, width=device-width">
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -11,57 +10,125 @@
     <link rel="apple-touch-icon" href="favicon.png">
     <link rel="icon" href="favicon.png" type="image/png" />
     <title>Tiny Departures Board</title>
+    <script>
+        (() => {
+        const themeMatcher = window.matchMedia('(prefers-color-scheme: dark)');
+        const applyTheme = () => { document.documentElement.setAttribute('data-bs-theme', themeMatcher.matches ? 'dark' : 'light'); };
+        applyTheme();
+        themeMatcher.addEventListener('change', applyTheme);
+        })();
+    </script>
 </head>
-<body>
+<style>
+    :root {--bs-body-font-size: 0.875rem;}
+    .btn {--bs-btn-font-size: 0.875rem;}
+    .btn-outline-secondary {font-size: 1rem;}
+    .form-control, .form-select {font-size: var(--bs-body-font-size);}
+    .form-label, .form-check-label {font-weight:500;}
+</style>
+<body class="bg-body-tertiary py-4">
     <div style="width: min(90%, 500px); margin: 0 auto; padding: 0 10px;">
-        <form id="formsettings">
-            <fieldset>
-                <legend style="text-align: center;">Departures Board Setup</legend>
-                <div class="form-group">
-                <label class="control-label" for="nrKey">National Rail Token</label>
-                    <input id="nrKey" type="text" placeholder="Optionally, enter your 36 character token" class="form-control input-md">
-                    <span class="help-block">You will need a National Rail Enquiries Darwin Lite Webservice token if you wish to display National Rail departures. Enter the token exactly as received (in the format nnnnnnnn-nnnn-nnnn-nnnn-nnnnnnnnnnnn). You can register for a token free of charge <a href="https://realtime.nationalrail.co.uk/OpenLDBWSRegistration" target="_blank">here</a>.</span>
-                </div>
-                <div class="form-group">
-                    <label class="control-label" for="owmKey">OpenWeather Map API Key</label>
-                    <input id="owmKey" type="text" placeholder="Optionally, enter your API key" class="form-control input-md">
-                    <span class="help-block">Enter your openweathermap.org api key if you wish to display station weather information. You can register for a free api key <a href="https://home.openweathermap.org/users/sign_up" target="_blank">here</a>.</span>
-                </div>
-                <div class="form-group">
-                    <div class="row">
-                        <div class="col-xs-6 text-center">
-                            <button id="save" name="save" class="btn btn-primary" type="button">Save</button>
-                        </div>
-                        <div class="col-xs-6 text-center">
-                            <button id="cancel" name="cancel" class="btn btn-default" type="button" disabled>Cancel</button>
-                        </div>
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-primary text-white text-center py-3">
+                <h5 class="mb-0">Tiny Departures Board Setup</h5>
+            </div>
+            <div class="card-body p-4">
+                <form id="formsettings">
+                    <div class="mb-4">
+                        <label class="form-label fw-bold" for="rdmDepKey">RDG Live Departure Board API key</label>
+                        <input id="rdmDepKey" type="text" placeholder="Optionally, enter your consumer api key" class="form-control">
+                        <div class="form-text">You will need a <a href="https://raildata.org.uk/dataProduct/P-d81d6eaf-8060-4467-a339-1c833e50cbbe/overview" target="_blank">Live Departure Board (1.1)</a> Consumer Key from Rail Data Marketplace if you want to display National Rail departures. You can register for access free of charge <a href="https://raildata.org.uk/registerPartner" target="_blank">here</a>. Follow the full instructions <a href="https://departures-board.github.io/Departures-Board-API-Keys-Guide.pdf" target="_blank">here</a>.</div>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label fw-bold" for="nrKey">National Rail Token (Legacy)</label>
+                        <input id="nrKey" type="text" placeholder="Optionally, enter your 36 character token" class="form-control">
+                        <div class="form-text">If you have a National Rail Enquiries Darwin Lite Webservice token you can still use the legacy data feed. This feed is likely to be discontinued in the future so we recommend registering with the Rail Data Marketplace (above). Enter the token exactly as received (in the format nnnnnnnn-nnnn-nnnn-nnnn-nnnnnnnnnnnn).</div>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label fw-bold" for="owmKey">OpenWeather Map API Key</label>
+                        <input id="owmKey" type="text" placeholder="Optionally, enter your API key" class="form-control">
+                        <div class="form-text">Enter your API key if you want to source weather data from OpenWeather Map. You can register for a free account <a href="https://home.openweathermap.org/users/sign_up" target="_blank">here</a>. The board will display weather data from Open-Meteo if no API key is entered.</div>
+                    </div>
+                </form>
+            </div>
+            <div class="card-footer bg-transparent p-4 pt-0 border-0">
+                <div class="row g-3">
+                    <div class="col-6">
+                        <button id="save" name="save" class="btn btn-primary w-100" type="button">Save</button>
+                    </div>
+                    <div class="col-6">
+                        <button id="cancel" name="cancel" class="btn btn-outline-secondary w-100" type="button" disabled>Cancel</button>
                     </div>
                 </div>
-            </fieldset>
-    </form>
+            </div>
+        </div>
     </div>
-
     <script>
+        let testSvcID = ''; // Store a test ServiceID
+        const keyErrorText = " Please check you have copied your key correctly. It may take up to 30 minutes for a newly created key to become active.\n\nNo changes have been saved.";
+
         $(document).ready(function() {
             const nrKeyPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
             function validateKeys() {
                 const nrVal  = $('#nrKey').val().trim();
+
                 const nrEntered  = nrVal.length > 0;
-                const enableSave = !nrEntered || nrKeyPattern.test(nrVal);
+
+                const nrValid  = !nrEntered  || nrKeyPattern.test(nrVal);
+
+                const enableSave = nrValid;
 
                 $('#save').prop('disabled', !enableSave);
             }
 
+            async function validateOwmKey(token) {
+                if (token === '') return true;
+                try {
+                    const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=51&lon=0&appid=${token}`);
+                    return response.ok;
+                } catch (error) {
+                    return false;
+                }
+            }
+
+            async function validateRdgDepKey(token) {
+                if (token === '') return true;
+
+                try {
+                    const response = await fetch(`https://api1.raildata.org.uk/1010-live-departure-board-dep1_2/LDBWS/api/20220120/GetDepBoardWithDetails/WAT`, {
+                    method: 'GET',
+                    headers: {
+                        'x-apikey': token,
+                        'Accept': 'application/json'
+                    }
+                    });
+
+                    if (!response.ok) return false;
+
+                    const data = await response.json();
+                    if (data.trainServices && data.trainServices.length > 0) {
+                        testSvcID = data.trainServices[0].serviceID; // Grab a serviceID
+                    }
+                    return true;
+                } catch (error) {
+                    console.log(error);
+                    return false;
+                }
+            }
+
             // Load saved API keys
             $.getJSON('/apikeys.json', function (data) {
+                if (data.rdmDepKey) {
+                    $('#rdmDepKey').val(data.rdmDepKey);
+                }
                 if (data.nrToken) {
                     $('#nrKey').val(data.nrToken);
                 }
                 if (data.owmToken) {
                     $('#owmKey').val(data.owmToken);
                 }
-                // Validate after loading
+                // Validate legacy key after loading
                 validateKeys();
                 $('#cancel').prop('disabled', false);
             });
@@ -71,13 +138,31 @@
                 validateKeys();
             });
 
-            $('#cancel').click(() => location.replace("/"));
+            $('#cancel').click(() => window.history.back());
 
-            $('#save').click(function () {
-                const nrToken = $('#nrKey').val();
-                const owmToken = $('#owmKey').val();
+            $('#save').click(async function () {
+                const $btn = $(this);
+                const rdmDepKey = $('#rdmDepKey').val().trim();
+                const nrToken = $('#nrKey').val().trim();
+                const owmToken = $('#owmKey').val().trim();
+
+                $btn.prop('disabled', true);
+                const isOwmValid = await validateOwmKey(owmToken);
+                if (!isOwmValid) {
+                    await bsAlert(`The <b>OpenWeather Map</b> API key is not valid.${keyErrorText}`);
+                    $btn.prop('disabled', false);
+                    return;
+                }
+
+                const isRdgDepValid = await validateRdgDepKey(rdmDepKey);
+                if (!isRdgDepValid) {
+                    await bsAlert(`The RDG <b>Live Departure Board</b> API key is not valid.${keyErrorText}`);
+                    $btn.prop('disabled', false);
+                    return;
+                }
 
                 const payload = {
+                    rdmDepKey: rdmDepKey,
                     nrToken: nrToken,
                     owmToken: owmToken
                 };
@@ -87,16 +172,94 @@
                     type: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify(payload),
-                    success: function (response) {
-                        alert(response); // Display server's success response text
+                    success: async function (response) {
+                        await bsAlert(response,"Tiny Departures Board Setup",10000);
                         location.replace("/");
                     },
-                    error: function (xhr, status, error) {
-                        alert(xhr.responseText); // Display server's error response text
+                    error: async function (xhr, status, error) {
+                        await bsAlert(xhr.responseText,"System Error");
+                        $btn.prop('disabled', false);
                     }
                 });
             });
         });
+
+        // Utility function to generate dynamic Bootstrap 5 modals
+        function showBsModal(options) {
+            const {
+            title = 'Message',
+            body = '',
+            type = 'alert',
+            timeout = 0,
+            onConfirm = () => {},
+            onCancel = () => {}
+            } = options;
+
+            // Create unique ID for the modal
+            const modalId = 'bsModal-' + Date.now();
+
+            const modalHtml = `
+            <div class="modal fade" id="${modalId}" tabindex="-1" aria-labelledby="${modalId}Label" aria-hidden="true" data-bs-backdrop="static">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="${modalId}Label">${title}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" style="white-space: pre-wrap;">${body}</div>
+                <div class="modal-footer">
+                    ${type === 'confirm' ? `<button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="${modalId}-btn-cancel">Cancel</button>` : ''}
+                    <button type="button" class="btn btn-primary" id="${modalId}-btn-ok">${type === 'confirm' ? 'OK' : 'Close'}</button>
+                </div>
+                </div>
+            </div>
+            </div>`;
+
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            const modalElement = document.getElementById(modalId);
+            const bsModal = new bootstrap.Modal(modalElement);
+            let isConfirmed = false;
+
+            document.getElementById(`${modalId}-btn-ok`).addEventListener('click', () => {
+            isConfirmed = true;
+            bsModal.hide();
+            onConfirm();
+            });
+
+            if (type === 'confirm') {
+            document.getElementById(`${modalId}-btn-cancel`).addEventListener('click', () => {
+                bsModal.hide();
+                onCancel();
+            });
+            }
+
+            modalElement.addEventListener('hidden.bs.modal', () => {
+            if (!isConfirmed && type === 'confirm') {
+                onCancel();
+            } else if (!isConfirmed && type === 'alert') {
+                onConfirm();
+            }
+            modalElement.remove();
+            });
+
+            bsModal.show();
+
+            if (timeout > 0) {
+            setTimeout(() => {
+                if (document.getElementById(modalId)) {
+                bsModal.hide();
+                }
+            }, timeout);
+            }
+        }
+
+        // Wrapper for an Alert Modal
+        function bsAlert(message,title='Tiny Departures Board',timeout=0) {
+            return new Promise(resolve => {
+            showBsModal({title,body:message,type:'alert',timeout,onConfirm:resolve,onCancel:resolve});
+            });
+        }
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI" crossorigin="anonymous"></script>
 </body>
 </html>

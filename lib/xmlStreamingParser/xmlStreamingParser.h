@@ -38,8 +38,9 @@
 #define STATE_TAGNAME 3
 #define STATE_TAGCONTENTS 4
 #define STATE_ENDTAG 5
-#define STATE_EMPTYTAG 6
-#define STATE_ATTRIBUTE 7
+#define STATE_ATTRIBUTE 6
+#define STATE_CDATA 7
+#define STATE_COMMENT 8
 
 class xmlStreamingParser {
   private:
@@ -49,9 +50,13 @@ class xmlStreamingParser {
     xmlListener* myListener;
 
     char buffer[XML_BUFFER_MAX_LENGTH];
+    //char currentTagName[128]; // Used for endTag with self-closing tags. We don't need it, save some RAM.
+
     bool bInitialize;   // True for the first call into a state
     bool inAttrQuote = false; // true if we're inside a quoted attribute string
     uint32_t length;
+    char cdataMatch[10];
+    uint8_t cdataIndex;
 
     void state_Begin(const char character);
     void state_StartTag(const char character);
@@ -60,6 +65,8 @@ class xmlStreamingParser {
     void state_TagContents(const char character);
     void state_Attribute(const char character);
     void state_EndTag(const char character);
+    void state_CDATA(const char character);
+    void state_Comment(const char character);
     void ContextBufferAddChar(const char character);
     void ChangeState(int newState);
 

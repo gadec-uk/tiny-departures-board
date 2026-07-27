@@ -26,12 +26,14 @@ This project is based on the table top Departures Board available [here](https:/
 
 ### What you'll need
 
-1. An ESP32-C3 SuperMini board. For example from [AliExpress](https://www.aliexpress.com/item/1005007663345442.html).
+1. An ESP32-C3 SuperMini board. For example from [AliExpress](https://www.aliexpress.com/item/1005008809016984.html).
 2. A 0.91" 128x32 OLED Display Panel with SSD1306 display controller onboard. For example from [AliExpress](https://www.aliexpress.com/item/1005008640132638.html).
 3. A 3D printed case using the [STL](https://github.com/gadec-uk/tiny-departures-board/tree/main/stl) files provided. There are two version of the case - use the deeper version if you have a OLED panel with pre-soldered header pins (and you don't want to remove them). If you don't have a 3D printer, the cases are available from our [store](https://store.gadec.co.uk) or you can use a 3D print service.
-4. A National Rail Darwin Lite API token (these are free of charge - request one [here](https://realtime.nationalrail.co.uk/OpenLDBWSRegistration)). The board will only operate in Bus mode without a token.
-5. Optionally, an OpenWeather Map API token to display weather conditions at the selected station or bus stop (these are also free, sign-up for a free developer account [here](https://home.openweathermap.org/users/sign_up)).
+4. For National Rail, the board supports using either the Rail Delivery Group feeds (recommended) or the legacy OpenLDBWS feed. Both feeds are free of charge and provide identical information but the legacy OpenLDBWS feed may be discontinued in the future. To use the Rail Delivery Group feeds, you will need a [Live Departure Board 1.1](https://raildata.org.uk/dataProduct/P-d81d6eaf-8060-4467-a339-1c833e50cbbe/overview) consumer key. Alternatively, if you already have a token for the legacy OpenLDBWS feed, you can enter that during setup. The board will only operate in Bus mode without either a Rail Delivery Group consumer key or a legacy OpenLDBWS token.
+5. By default, weather data is sourced from Open-Meteo. If you prefer to use OpenWeather (which usually provides slightly more localised weather conditions) you will need an OpenWeather Map API token (these are also free, sign-up for a free developer account [here](https://home.openweathermap.org/users/sign_up)).
 6. Some intermediate soldering skills.
+
+A step-by-step guide to obtaining the API keys is available [here](https://departures-board.github.io/Departures-Board-API-Keys-Guide.pdf).
 
 <img src="https://github.com/user-attachments/assets/ca62021b-3b69-4d16-9f55-130701f6005f" align="center">
 
@@ -42,7 +44,7 @@ Solder the four wires to the **BACK** of the OLED panel (or directly to the head
 
 ### Installing the firmware
 
-The project uses the Arduino framework and the ESP32 v3.2.0 core. If you want to build from source, you'll need [PlatformIO](https://platformio.org).
+The project uses the Arduino framework and the ESP32 v3.3.9 core. If you want to build from source, you'll need [PlatformIO](https://platformio.org).
 
 Alternatively, you can download pre-compiled firmware images from the [releases](https://github.com/gadec-uk/tiny-departures-board/releases). These can be installed over the USB serial connection using [esptool](https://github.com/espressif/esptool). If you have python installed, install with *pip install esptool*. For convenience, a pre-compiled executable version for Windows is included [here](https://github.com/gadec-uk/tiny-departures-board/tree/main/esptool).
 
@@ -71,7 +73,7 @@ WiFiManager is used to setup the initial WiFi connection on first boot. The ESP3
 
 [![Tiny Departures Board Setup Video](https://github.com/user-attachments/assets/d72efaa5-143c-4769-99b4-29d22d5fdb06)](https://youtu.be/3kOFSdS7M2M)
 
-Once the ESP32-C3 has established an Internet connection, the next step is to enter your API keys (if you do not enter a National Rail token, the board will only operate in Bus mode). Finally, select a station location. Start typing the location name and valid choices will be displayed as you type.
+Once the ESP32-C3 has established an Internet connection, the next step is to enter your API keys (if applicable) and then finally, select a station location. Start typing the location name and valid choices will be displayed as you type.
 
 ### Web GUI
 
@@ -84,20 +86,20 @@ At start-up, the ESP32's IP address is displayed. To change the station or to co
 - **Only show these Bus services** - filter buses by service numbers (enter a list of the service numbers, comma separated).
 - **Recently verfied ATCO codes** - quickly select from recently used bus stop ATCO codes.
 - **Brightness** - adjusts the brightness of the OLED screen.
+- **Include current weather at station/bus stop** - optionally display weather conditions at the selected station or bus stop.
 - **Include bus replacement services** - optionally include bus replacement services (National Rail mode).
-- **Include current weather at location** - this option requires a valid OpenWeather Map API key (National Rail/Bus mode).
-- **Increase API refresh rate** - reduces the interval between data refreshes (National Rail mode). Uses more data and is not usually required.
-- **Suppress calling at / information messages** - removes all horizontally scrolling text (much lower functionality but less distracting).
 - **Flip the display 180°** - rotates the display (the case design provides two different viewing angles depending on orientation).
-- **Set custom hostname for this board** - change the hostname from the default "TinyDeparturesBoard", useful if you are running multiple boards.
-- **Custom (non-UK) time zone (only for clock)** - if you're not based in the UK you can set the clock to display in your local time zone (see [below](#custom-time-zones) for details).
-- **Enable automatic firmware updates at startup** - automatically checks for AND installs the latest firmware from this repository.
+- **Set custom hostname for board** - change the hostname from the default "TinyDeparturesBoard", useful if you are running multiple boards.
+- **Custom (non-UK) time zone** - if you're not based in the UK you can set the clock to display in your local time zone (see [below](#custom-time-zones) for details).
+- **Suppress calling at / info messages** - removes all horizontally scrolling text (much lower functionality but less distracting).
+- **Increase Rail API refresh rate** - reduces the interval between data refreshes (National Rail mode). Uses more data and is not usually required.
+- **Automatic firmware updates at startup** - automatically checks for AND installs the latest firmware from this repository.
+- **Rail data source** - Select which api feed should be used for National Rail mode (only feeds with api keys present are shown).
 
 A drop-down menu (top-right) adds the following options:
 - **Check for Updates** - manually checks for and installs any updates to the firmware.
 - **Edit API Keys** - view/edit your National Rail and OpenWeather Map API keys.
 - **Clear WiFi Settings** - deletes the stored WiFi credentials and restarts in WiFiManager mode (useful to change WiFi network).
-- **Display Alignment** - displays a test screen to aid alignment of the panel in the case.
 - **Restart System** - restarts the ESP32.
 
 #### Other Web GUI Endpoints
@@ -111,7 +113,7 @@ A few other urls have been implemented, primarily for debugging/developer use:
 - **/upload** - upload a file to the file system.
 
 ### Bus Stop ATCO codes
-Every UK bus stop has a unique ATCO code number. To find the ATCO code of the stop you want to monitor, go to [bustimes.org/search](https://bustimes.org/search) and type a location in the search box. Select the location from the list of places shown and then select the particular stop you want from the list. The ATCO code is shown on the stop information page. After entering the code in the Departures Board setup screen, tap the **Verify** button and the location will be shown confirming your selection. You must use the **Verify** button *before* you can save changes. Up to ten of the most recently verified ATCO codes are saved and can be selected from a dropdown list for quick access.
+Every UK bus stop has a unique ATCO code number. To find the ATCO code of the stop you want to monitor, go to [bustimes.org/search](https://bustimes.org/search) and type a location in the search box. Select the location from the list of places shown and then select the particular stop you want from the list. The ATCO code is shown on the stop information page. After entering the code in the Departures Board setup screen, tap the **Verify** button and the location will be shown confirming your selection. You must use the **Verify** button *before* you can save changes. Up to ten of the most recently verified ATCO codes are saved and can be selected from a dropdown list for quick access. The bustimes map and search facility are also embedded in the Bus mode configuration screen.
 
 <img src="https://github.com/user-attachments/assets/8a41ec6d-5f15-4102-b3d5-c09260986319" align="center">
 

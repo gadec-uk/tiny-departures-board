@@ -16,10 +16,6 @@
  *
  */
 
-// Release version number
-#define VERSION_MAJOR 1
-#define VERSION_MINOR 0
-
 // Set a safe default - some ESP32 C3 SuperMini boards don't handle high output power WiFi
 #define DEFAULT_WIFI_POWER WIFI_POWER_15dBm
 
@@ -28,17 +24,22 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#include <WebServer.h>
+#include <WiFiManager.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <StreamString.h>
+#include <Ticker.h>
 #include <HTTPClient.h>
 #include <ESPmDNS.h>
 #include <HTTPUpdateGitHub.h>
 #include <FS.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
-#include <WiFiManager.h>
 #include <weatherClient.h>
-#include <stationData.h>
+#include <sharedDataStructs.h>
+#include <responseCodes.h>
 #include <raildataXmlClient.h>
+#include <rdmRailClient.h>
 #include <busDataClient.h>
 #include <githubClient.h>
 #include <webgui/webgraphics.h>
@@ -52,16 +53,14 @@
 #define msHour 3600000 // 3600000 milliseconds in an hour
 #define msMin 60000 // 60000 milliseconds in a second
 
-WebServer server(80);     // Hosting the Web GUI
-File fsUploadFile;        // File uploads
+static AsyncWebServer server(80); // Hosting the Web GUI
 
 // Shorthand for response formats
-static const char contentTypeJson[] PROGMEM = "application/json";
-static const char contentTypeText[] PROGMEM = "text/plain";
-static const char contentTypeHtml[] PROGMEM = "text/html";
+static const char contentTypeJson[] = "application/json";
+static const char contentTypeText[] = "text/plain";
+static const char contentTypeHtml[] = "text/html";
 
 // Using NTP to set and maintain the clock
-static const char ntpServer[] PROGMEM = "europe.pool.ntp.org";
 static struct tm timeinfo;
 static const char ukTimezone[] = "GMT0BST,M3.5.0/1,M10.5.0";
 
@@ -69,7 +68,7 @@ static const char ukTimezone[] = "GMT0BST,M3.5.0/1,M10.5.0";
 static const char defaultHostname[] = "TinyDeparturesBoard";
 
 // Local firmware updates via /update Web GUI
-static const char updatePage[] PROGMEM =
+static const char updatePage[] =
 "<script src='https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js'></script>"
 "<html><body style=\"font-family:Helvetica,Arial,sans-serif\"><h2>Tiny Departures Board Manual Update</h2><p>Upload a <b>firmware.bin</b> file.</p>"
 "<form method='POST' action='#' enctype='multipart/form-data' id='upload_form'>"
@@ -108,13 +107,13 @@ static const char updatePage[] PROGMEM =
  "</script></body></html>";
 
 // /upload page
-static const char uploadPage[] PROGMEM =
+static const char uploadPage[] =
 "<html><body style=\"font-family:Helvetica,Arial,sans-serif\">"
 "<h2>Upload a file to the file system</h2><form method='post' enctype='multipart/form-data'><input type='file' name='name'>"
 "<input class='button' type='submit' value='Upload'></form></body></html>";
 
 // /success page
-static const char successPage[] PROGMEM =
+static const char successPage[] =
 "<html><body style=\"font-family:Helvetica,Arial,sans-serif\"><h3>Upload completed successfully.</h3>\n"
 "<p><a href=\"/dir\">List file system directory</a></p>\n"
 "<h2>Upload another file</h2><form method=\"post\" action=\"/upload\" enctype=\"multipart/form-data\"><input type=\"file\" name=\"name\"><input class=\"button\" type=\"submit\" value=\"Upload\"></form>\n"
@@ -122,7 +121,6 @@ static const char successPage[] PROGMEM =
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 32 // OLED display height, in pixels
-#define DIMMED_BRIGHTNESS 1 // OLED display brightness level when in sleep/screensaver mode
 
 U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0,U8X8_PIN_NONE,9,8);
 
@@ -132,41 +130,52 @@ U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0,U8X8_PIN_NONE,9,8);
 #define LINE3 18
 #define LINE4 24
 
+static Ticker restartTimer; // used to schedule reboots
+
 //
 // Custom fonts - replicas of those used on the real display boards
 //
-static const uint8_t NatRailTiny7[970] U8G2_FONT_SECTION("NatRailTiny7") =
-  "d\0\3\2\3\3\2\4\5\7\7\0\0\7\0\7\0\1\60\2e\3\261 \5\200\70\1!\7\271("
-  "\61(\1\42\7\223M\221(\1#\16\275hSJ\222A\251\14J)I\0$\13\275h\225-\265-"
-  "I\266\10%\11\275h\241IY'M&\15\275h#\225\244$\221\222(R\2'\5\231,\61(\7"
-  "\272\70\243t\12)\11\272\70\21%-\12\0*\13\275hU\251\34\224\245)\2+\12\255i\25F\203"
-  "\24F\0,\7\232\70\223(\0-\5\213K\61.\6\222\70\61\4/\13\274X\27I\221\24I\31\0"
-  "\60\11\275h\263d\336\222\5\61\11\275h\25\215\235\6\1\62\12\275h\263da\326\66\10\63\13\275h"
-  "\263da\244j\311\2\64\14\275h\227II)\31\264\60\1\65\13\275hq\34\322PK\26\0\66\14"
-  "\275h\263d\342\220dZ\262\0\67\11\275h\61\210Yc\15\70\14\275h\263dZ\262dZ\262\0\71"
-  "\14\275h\263dZ\62\204Z\262\0:\6\241)\21\5;\7\252\70\223*\0<\7\274X\27\65\66="
-  "\10\234Z\61\204C\0>\10\274X\21\66\265\1?\13\275h\263da\244\345P\4@\15\275h\263d"
-  "J\242\14\311\220.\0A\13\275h\263d\332\60d\266\0B\15\275h\61$\231\66(\231\66(\0C"
-  "\12\275h\263db[\262\0D\12\275h\61$\231\267A\1E\13\275hq\14\207$\14\7\1F\12"
-  "\275hq\14\207$,\2G\14\275h\263db\62dZ\262\0H\12\275h\221\331\206!\263\5I\10"
-  "\273H\261D]\6J\11\275h\331QK\26\0K\14\275h\221IIIK\242J\26L\10\275h\21"
-  "\366\70\10M\12\275h\221-K\242\271\5N\13\275h\221MJ\42m\266\0O\11\275h\263d\336\222"
-  "\5P\13\275h\61$\231\66(a\21Q\13\275h\263d.\211\24)\1R\14\275h\61$\231\66("
-  "\245J\26S\13\275h\263d\352\252%\13\0T\11\275h\61HaO\0U\11\275h\221\371\226,\0"
-  "V\12\275h\221yKj\21\0W\12\275h\221\271$Jr\13X\13\275h\221iI\255R\323\2Y"
-  "\12\275h\221iI-l\2Z\11\275h\61\210Y\307A[\7\272\70\261t\21\134\12\274X\221i\231"
-  "\226i\1]\7\272\70\241t\31^\6\223M\323\0_\6\214X\61\4`\6\222=\21\5a\11\254X"
-  "#&C\224\14b\13\274X\221eKd\32\22\0c\10\254X\63d\305\1d\11\274XW\31\42S"
-  "\62e\10\254X\243D\303\70f\11\274XU)MY\11g\12\254X\63D\311\66$\0h\11\274X"
-  "\221eK\344\24i\7\271(\221\14\2j\13\274X\227\3Y&%\12\0k\13\274X\221\225\224DJ"
-  "J\1l\6\271(q\10m\13\255h\241,\211\222hZ\0n\10\254X\261DN\1o\11\254X\243"
-  "D\246D\1p\12\254X\261DC\222e\0q\10\254X\63D\311Vr\10\254X\261DZ\15s\11"
-  "\254X\63\204\342\220\0t\13\274X\223ESV\211\22\0u\11\254X\21\71%\12\0v\11\255h\221"
-  "\331\222Z\4w\13\255h\221)\211\222(]\0x\11\255h\221%\265J-y\12\254X\21I\311\66"
-  "$\0z\11\254X\61DmC\0{\15\277\210\241-KO\221EM\6\5|\6\271(q\10}\6"
-  "\215k\61\10~\14\276x\63$\241qxH\242\4\14\275h\221d\225b\224D\211R\200\11\344k"
-  "\243DR\242\0\201\13\265h\227\14Z\224\15J\6\202\16\276x\63$\241b\211\24c\62$\0\203\10"
-  "\225h\221$J\1\0\0\0";
+static const uint8_t NatRailTiny7[1275] U8G2_FONT_SECTION("NatRailTiny7") =
+  "\221\0\3\2\4\3\4\4\5\11\7\0\0\7\0\7\0\1\65\2g\4\342 \5\0|\12!\7qD"
+  "\211A\11\42\7\63d\212\304\22#\16uD\233R\222\14JePJI\2$\14uD\253l\251m"
+  "I\262E\0%\14t\304\212H\221\42)R\244\0&\15uD\33\251$%\211\224D\221\22'\6\61"
+  "d\211\1(\10sD\252\244T+)\11sD\212\254T)\1*\12UL\253Jei\212\0+\12"
+  "UL\253\60\32\244\60\2,\7\62\304\231D\1-\6\23\134\212\1.\6\21D\211\0/\13sD\252"
+  "D\211\22%\212\0\60\12t\304\32%\362\224(\0\61\10\363\304\232D\352\62\62\12t\304\32%\312\242"
+  "\266!\63\14t\304\32%\312\22QJ\24\0\64\12t\304\272HI\244A+\65\13t\304\212A\33\63"
+  ")Q\0\66\14t\304\32%\322\226HJ\24\0\67\12t\304\212!\213jM\0\70\14t\304\32%\222"
+  "\22%\222\22\5\71\14tD\33%\222\222MJ\24\0:\6AL\211(;\7R\304\231T\1<\10"
+  "t\304\272\250\261\1=\6\63T\212m>\10t\304\212\260\251\15?\14t\304\32%\312\22)\7\42\0"
+  "@\14uD\233%\263$\312\220.\0A\12t\304\32%\222\206\311\24B\14t\304\212%\222\206$\222"
+  "\206\4C\12t\304\32%\322\232\22\5D\12t\304\212%\362\64$\0E\13t\304\212A\313\226,\33"
+  "\2F\12t\304\212A\313\226\254\6G\14t\304\32%\322\222IJ\24\0H\12t\304\212\310\64L\246"
+  "\0I\7qD\211C\0J\11t\304\272nR\242\0K\13t\304\212\310\222HII\12L\10t\304"
+  "\212\254\267!M\12uD\213lY\22\315-N\12t\304\212hQ&\247\0O\12t\304\32%\362\224"
+  "(\0P\13t\304\212%\222\206$\253\1Q\12t\304\32%\362\22%\1R\13t\304\212%\222\206\244"
+  "I\12S\12t\304\32%\22M\211\2T\11uD\213A\12{\2U\11t\304\212\310\247D\1V\12"
+  "uD\213\314[R\213\0W\13uD\213\314%Q\222[\0X\13uD\213LKj\225\232\26Y\13"
+  "uD\213LKja\23\0Z\12uD\213A\314:\16\2[\10r\304\211\245\213\0\134\11sD\212"
+  "H*I\5]\10r\304\14\245\313\0^\6#l\232\6_\6\23D\212\1`\6\42\354\211(a\11"
+  "T\304\32\61\31\242db\13t\304\212,[\42\323\220\0c\10T\304\232!+\16d\12t\304\272\312"
+  "\20\231\222\1e\11T\304\32%\32\306\1f\12t\304\252Ji\312J\0g\12T\304\232!J\266!"
+  "\1h\12t\304\212,[\42\247\0i\7qD\211d\20j\12sD\252\64\212\224\12\0k\13t\304"
+  "\212\254\244$RR\12l\7qD\211C\0m\12UD\13\245EI\64-n\11T\304\212$\61\231"
+  "\2o\12T\304\32%\62%\12\0p\12T\304\212%\222\206$\3q\11T\304\232!\222\222-r\11"
+  "T\304\212$\261\325\0s\11T\304\232!\24\207\4t\12t\304\232,\32\222\254(u\11T\304\212\310"
+  ")Q\0v\12UD\213\314\226\324\42\0w\13UD\213LI\224D\351\2x\12UD\213,\251U"
+  "j\1y\12T\304\212HJ\266!\1z\11UD\213Ak\33\4{\12sD\252$J\262(\13|"
+  "\7qD\211C\0}\13sD\212,\312\222(\211\0~\7%\134\33S\2\15uD\213$\253\24"
+  "\243$J\224\2\200\5\0D\10\201\14\345L\274d\320\242lP\62\0\202\7\62\304\231D\1\203\5\0"
+  "D\10\204\10\64\304\232\26%\1\205\7\25D\213\244\0\206\13uD\233%\263\15\7\245\2\207\16wD"
+  "\254-i\212,j\222e\23\0\210\20x\304\314t\310\242$\231\226R\66\244!\0\211\5\0D\10\212"
+  "\5\0D\10\213\5\0D\10\214\5\0D\10\215\15u\304\213\323\222h\312\220\14\203\0\216\15u\304\213"
+  "C\244\14\312\240H\303\20\217\13wD\214\267)\262\250\333p\220\6\63\327\217\7\221\7\62\344\211$\12"
+  "\222\7\62\344\231D\1\223\10\64\344\212\244)\11\224\10\64\344\232\26%\1\225\6\63T\212\7\226\6\25"
+  "\134\213A\227\5\0D\10\230\5\0D\10\231\5\0D\10\232\5\0D\10\233\5\0D\10\234\5\0D"
+  "\10\235\5\0D\10\236\5\0D\10\237\5\0D\10\240\5\0D\10\241\5\0D\10\242\5\0D\10\243"
+  "\12t\304\252Ji\312\242!\244\5\0D\10\245\5\0D\10\246\5\0D\10\247\5\0D\10\250\5\0"
+  "D\10\251\16wD\254\255\22)J&)\265l\2\252\5\0D\10\253\5\0D\10\254\5\0D\10\255"
+  "\5\0D\10\256\5\0D\10\257\5\0D\10\260\11D\334\32%\222\22\5\0\0\0";
 
 static const uint8_t tinyClockReg5[123] U8G2_FONT_SECTION("tinyClockReg5") =
   "\13\0\3\2\3\3\1\2\4\5\5\0\0\5\0\5\0\0\0\0\0\0b\60\11m=KfK\26\0"
@@ -208,62 +217,82 @@ static const uint8_t NatRailSmall9[985] U8G2_FONT_SECTION("NatRailSmall9") =
   "\200\11$k\215\22I\211\2\201\14\265%^\62hQ\66(\31\0\0\0\0";
 
 // Service attribution texts
-const char nrAttributionn[] = "National Rail Enquiries";
-const char btAttribution[] = "Powered by bustimes.org";
-
-//
-// GitHub Client for firmware updates
-//  - Pass a GitHub token if updates are to be loaded from a private repository
-//
-github ghUpdate("");
+static const char nrAttributionn[] = "National Rail Enquiries";
+static const char rdgAttribution[] = "Rail Delivery Group";
+static const char btAttribution[] = "Powered by bustimes.org";
 
 #define DATAUPDATEINTERVAL 150000     // How often we fetch data from National Rail (ms - 2.5 mins) - "default" option
 #define FASTDATAUPDATEINTERVAL 45000  // How often we fetch data from National Rail (ms - 45 secs) - "fast" option
 #define BUSDATAUPDATEINTERVAL 45000   // How often we fetch data from bustimes.org (ms - 45 secs)
+#define WEATHERUPDATEINTERVAL 1200000 // How often to update the weather forecast (ms - 20 mins)
+
+// Reusable data transfer structures
+rdiStation xfrStation;
+stnMessages xfrMessages;
+busTubeStation xfrBusTubeStation;
+sharedBufferSpace jsonKeyBuffer;
+
+// Station Data (shared)
+rdStation station;
+// Station Messages (shared)
+stnMessages messages;
+
+// Data transfer clients
+rdmRailClient rdmRailData(&xfrStation,&xfrMessages,&jsonKeyBuffer);
+raildataXmlClient darwinRailData(&xfrStation,&xfrMessages,&jsonKeyBuffer);
+busDataClient busdata(&xfrBusTubeStation,&jsonKeyBuffer);
+weatherClient currentWeather(&jsonKeyBuffer);
+github ghUpdate(&jsonKeyBuffer);
+
+static char weatherMsg[MAXWEATHERSIZE];
 
 // Bit and bobs
-unsigned long timer = 0;
-bool weatherEnabled = false;        // Showing weather at station location. Requires an OpenWeatherMap API key.
-bool enableBus = false;             // Include Bus services on the board?
-bool firmwareUpdates = true;        // Check for and install firmware updates automatically at boot?
-int brightness = 50;                // Initial brightness level of the OLED screen
-unsigned long lastWiFiReconnect=0;  // Last WiFi reconnection time (millis)
-bool firstLoad = true;              // Are we loading for the first time (no station config)?
-int prevProgressBarPosition=0;      // Used for progress bar smooth animation
-int startupProgressPercent;         // Initialisation progress
-bool wifiConnected = false;         // Connected to WiFi?
-unsigned long nextDataUpdate = 0;   // Next National Rail update time (millis)
-int dataLoadSuccess = 0;            // Count of successful data downloads
-int dataLoadFailure = 0;            // Count of failed data downloads
-unsigned long lastLoadFailure = 0;  // When the last failure occurred
-int dateDay;                        // Day of the month of displayed date
-bool noScrolling = false;           // Suppress all horizontal scrolling
-bool flipScreen = false;            // Rotate screen 180deg
-String timezone = "";               // custom (non UK) timezone for the clock
-bool apiKeys = false;               // Does apikeys.json exist?
-
-char hostname[33];                  // Network hostname (mDNS)
-char myUrl[24];                     // Stores the board's own url
+static unsigned long timer = 0;
+static bool weatherEnabled = false;        // Showing weather at station location. Requires an OpenWeatherMap API key.
+static bool enableBus = false;             // Include Bus services on the board?
+static bool firmwareUpdates = true;        // Check for and install firmware updates automatically at boot?
+static int brightness = 50;                // Initial brightness level of the OLED screen
+static unsigned long lastWiFiReconnect=0;  // Last WiFi reconnection time (millis)
+static bool firstLoad = true;              // Are we loading for the first time (no station config)?
+static int prevProgressBarPosition=0;      // Used for progress bar smooth animation
+static int startupProgressPercent;         // Initialisation progress
+static bool wifiConnected = false;         // Connected to WiFi?
+static unsigned long nextDataUpdate = 0;   // Next National Rail update time (millis)
+static int dataLoadSuccess = 0;            // Count of successful data downloads
+static int dataLoadFailure = 0;            // Count of failed data downloads
+static unsigned long lastLoadFailure = 0;  // When the last failure occurred
+static bool noScrolling = false;           // Suppress all horizontal scrolling
+static bool flipScreen = false;            // Rotate screen 180deg
+static String timezone = "";               // custom (non UK) timezone for the clock
+static bool apiKeys = false;               // Does apikeys.json exist?
+static bool softResetNeeded = false;       // Is a soft reset pending?
+static bool manualUpdateCheck = false;     // Has the GUI requested a firmware update check
+static bool useRDMclient = false;          // Use the new Rail Data Marketplace API instead of Darwin Lite
+static char hostname[33];                  // Network hostname (mDNS)
+static char myUrl[24];                     // Stores the board's own url
 
 // WiFi Manager status
-bool wifiConfigured = false;        // Is WiFi configured successfully?
+bool wifiConfigured = false;               // Is WiFi configured successfully?
 
 // Station Board Data
-char nrToken[37] = "";              // National Rail Darwin Lite Tokens are in the format nnnnnnnn-nnnn-nnnn-nnnn-nnnnnnnnnnnn, where each 'n' represents a hexadecimal character (0-9 or a-f).
-char crsCode[4] = "";               // Station code (3 character)
-float stationLat=0;                 // Selected station Latitude/Longitude (used to get weather for the location)
+char nrToken[37] = "";                    // National Rail Darwin Lite Tokens are in the format nnnnnnnn-nnnn-nnnn-nnnn-nnnnnnnnnnnn, where each 'n' represents a hexadecimal character (0-9 or a-f).
+static String rdmDeparturesApiKey = "";   // RDM Consumer key for DeparturesBoard API
+char crsCode[4] = "";                     // Station code (3 character)
+float stationLat=0;                       // Selected station Latitude/Longitude (used to get weather for the location)
 float stationLon=0;
-char callingCrsCode[4] = "";        // Station code to filter routes on
-char callingStation[45] = "";       // Calling filter station friendly name
+char callingCrsCode[4] = "";              // Station code to filter routes on
+char callingStation[45] = "";             // Calling filter station friendly name
 char platformFilter[MAXPLATFORMFILTERSIZE]; // CSV list of platforms to filter on
 char cleanPlatformFilter[MAXPLATFORMFILTERSIZE]; // Cleaned up platform filter (for performance)
-char busAtco[13]="";                // Bus Stop ATCO location
-String busName="";                  // Bus Stop long name
-int busDestX;                       // Variable margin for bus destination
-char busFilter[25]="";              // CSV list of services to filter on
-char cleanBusFilter[25];            // Cleaned up bus filter (for performance)
-float busLat=0;                     // Bus stop Latitude/Longitude (used to get weather for the location)
+char busAtco[13]="";                      // Bus Stop ATCO location
+String busName="";                        // Bus Stop long name
+int busDestX;                             // Variable margin for bus destination
+char busFilter[25]="";                    // CSV list of services to filter on
+char cleanBusFilter[25];                  // Cleaned up bus filter (for performance)
+float busLat=0;                           // Bus stop Latitude/Longitude (used to get weather for the location)
 float busLon=0;
+static bool railIsSet = false;
+static bool busIsSet = false;
 
 // tiny board has two possible modes.
 enum boardModes {
@@ -273,9 +302,9 @@ enum boardModes {
 boardModes boardMode = MODE_RAIL;
 
 // Coach class availability
-static const char firstClassSeating[] PROGMEM = " First class seating only.";
-static const char standardClassSeating[] PROGMEM = " Standard class seating only.";
-static const char dualClassSeating[] PROGMEM = " First and Standard class seating available.";
+static const char firstClassSeating[] = " First class seating only.";
+static const char standardClassSeating[] = " Standard class seating only.";
+static const char dualClassSeating[] = " First and Standard class seating available.";
 
 // Animation vars
 int numMessages=0;
@@ -306,10 +335,8 @@ int fpsDelay=25;                    // Total ms between text movement (for smoot
 unsigned long refreshTimer = 0;
 
 // Weather Stuff
-char weatherMsg[46];                            // Current weather at station location
 unsigned long nextWeatherUpdate = 0;            // When the next weather update is due
-String openWeatherMapApiKey = "";               // The API key to use
-weatherClient currentWeather;                   // Create a weather client
+static char openWeatherMapApiKey[33] = "";      // If no OWM API key is provided, we use Open-Meteo weather data
 
 bool noDataLoaded = true;                       // True if no data received for the station
 int lastUpdateResult = 0;                       // Result of last data refresh
@@ -321,15 +348,6 @@ long apiRefreshRate = DATAUPDATEINTERVAL;       // User selected refresh rate fo
 
 char wsdlHost[MAXHOSTSIZE];                     // wsdl Host name
 char wsdlAPI[MAXAPIURLSIZE];                    // wsdl API url
-
-// RailData XML Client
-raildataXmlClient* raildata = nullptr;
-// Bus Client
-busDataClient* busdata = nullptr;
-// Station Data (shared)
-rdStation station;
-// Station Messages (shared)
-stnMessages messages;
 
 /*
  * Graphics helper functions for OLED panel
@@ -344,20 +362,13 @@ int getStringWidth(const char *message) {
   return u8g2.getStrWidth(message);
 }
 
-int getStringWidth(const __FlashStringHelper *message) {
-  String temp = String(message);
-  char buff[temp.length()+1];
-  temp.toCharArray(buff,sizeof(buff));
-  return u8g2.getStrWidth(buff);
-}
-
 void drawTruncatedText(const char *message, int line) {
   char buff[strlen(message)+4];
   int maxWidth = SCREEN_WIDTH - 6;
   strcpy(buff,message);
   int i = strlen(buff);
   while (u8g2.getStrWidth(buff)>maxWidth && i) buff[i--] = '\0';
-  strcat(buff,"\x83");
+  strcat(buff,"\x85");
   u8g2.drawStr(0,line-1,buff);
 }
 
@@ -365,15 +376,6 @@ void centreText(const char *message, int line) {
   int width = u8g2.getStrWidth(message);
   if (width<=SCREEN_WIDTH) u8g2.drawStr((SCREEN_WIDTH-width)/2,line-1,message);
   else drawTruncatedText(message,line);
-}
-
-void centreText(const __FlashStringHelper *message, int line) {
-  String temp = String(message);
-  char buff[temp.length()+1];
-  temp.toCharArray(buff,sizeof(buff));
-  int width = u8g2.getStrWidth(buff);
-  if (width<=SCREEN_WIDTH) u8g2.drawStr((SCREEN_WIDTH-width)/2,line-1,buff);
-  else drawTruncatedText(buff,line);
 }
 
 void drawProgressBar(int percent) {
@@ -402,13 +404,6 @@ void drawProgressBar(int percent) {
 }
 
 void progressBar(const char *text, int percent) {
-  u8g2.setFont(NatRailTiny7);
-  blankArea(0,0,128,24);
-  centreText(text,0);
-  drawProgressBar(percent);
-}
-
-void progressBar(const __FlashStringHelper *text, int percent) {
   u8g2.setFont(NatRailTiny7);
   blankArea(0,0,128,24);
   centreText(text,0);
@@ -453,25 +448,25 @@ void showUpdateIcon(bool show) {
 */
 void showSetupScreen() {
   u8g2.clearBuffer();
-  centreText(F("WiFi Setup. Connect to"),0);
-  centreText(F("\"Departures Board\""),8);
-  centreText(F("and then go to"),16);
-  centreText(F("http://192.168.4.1"),24);
+  centreText("WiFi Setup. Connect to",0);
+  centreText("\"Departures Board\"",8);
+  centreText("and then go to",16);
+  centreText("http://192.168.4.1",24);
   u8g2.sendBuffer();
 }
 
 void showNoDataScreen() {
   u8g2.clearBuffer();
-  centreText(F("No data for the selected"),0);
-  centreText(F("location is available."),8);
+  centreText("No data for the selected",0);
+  centreText("location is available.",8);
   u8g2.sendBuffer();
 }
 
 void showSetupKeysHelpScreen() {
   u8g2.clearBuffer();
   u8g2.setFont(NatRailSmall9);
-  centreText(F("Next, enter your"),0);
-  centreText(F("API keys at:"),10);
+  centreText("Next, enter your",0);
+  centreText("API keys at:",10);
   centreText(myUrl,20);
   u8g2.setFont(NatRailTiny7);
   u8g2.sendBuffer();
@@ -480,9 +475,9 @@ void showSetupKeysHelpScreen() {
 void showSetupCrsHelpScreen() {
   u8g2.clearBuffer();
   u8g2.setFont(NatRailSmall9);
-  centreText(F("Next, select a"),0);
-  if (nrToken[0]) centreText(F("station or bus stop at:"),10);
-  else centreText(F("bus stop at:"),10);
+  centreText("Next, select a",0);
+  if (nrToken[0] || rdmDeparturesApiKey.length()) centreText("station or bus stop at:",10);
+  else centreText("bus stop at:",10);
   centreText(myUrl,20);
   u8g2.setFont(NatRailTiny7);
   u8g2.sendBuffer();
@@ -490,10 +485,10 @@ void showSetupCrsHelpScreen() {
 
 void showWsdlFailureScreen() {
   u8g2.clearBuffer();
-  centreText(F("NatRail data feed is"),0);
-  centreText(F("unavailable. The board"),8);
-  centreText(F("cannot be loaded."),16);
-  centreText(F("Try again later. :("),24);
+  centreText("NatRail data feed is",0);
+  centreText("unavailable. The board",8);
+  centreText("cannot be loaded.",16);
+  centreText("Try again later. :(",24);
   u8g2.sendBuffer();
 }
 
@@ -502,15 +497,19 @@ void showTokenErrorScreen() {
   u8g2.clearBuffer();
   switch (boardMode) {
     case MODE_RAIL:
-      centreText(F("NatRail access denied."),0);
-      strcpy(nrToken,"");
+      if (useRDMclient) {
+        centreText("RDG api access denied.",0);
+      } else {
+        centreText("NatRail access denied.",0);
+        strcpy(nrToken,"");
+      }
       break;
     case MODE_BUS:
-      centreText(F("Bustimes.org access denied."),0);
+      centreText("Bustimes.org access denied.",0);
       break;
   }
-  centreText(F("Check you have entered your"),8);
-  centreText(F("API keys correctly at:"),16);
+  centreText("Check you have entered your",8);
+  centreText("API keys correctly at:",16);
   sprintf(msg,"%s/keys.htm",myUrl);
   centreText(msg,24);
   u8g2.sendBuffer();
@@ -528,8 +527,8 @@ void showCRSErrorScreen() {
       break;
   }
   centreText(msg,0);
-  centreText(F("is not valid. Select a"),8);
-  centreText(F("valid code at:"),16);
+  centreText("is not valid. Select a",8);
+  centreText("valid code at:",16);
   centreText(myUrl,24);
   u8g2.sendBuffer();
 }
@@ -537,18 +536,18 @@ void showCRSErrorScreen() {
 void showFirmwareUpdateWarningScreen(int secs) {
   char countdown[60];
   u8g2.clearBuffer();
-  centreText(F("Firmware Update Available"),0);
-  centreText(F("The update will begin"),8);
+  centreText("Firmware Update Available",0);
+  centreText("The update will begin",8);
   sprintf(countdown,"installing in %d seconds.",secs);
   centreText(countdown,16);
-  centreText(F("*DO NOT REMOVE POWER*"),24);
+  centreText("*DO NOT REMOVE POWER*",24);
   u8g2.sendBuffer();
 }
 
 void showFirmwareUpdateProgress(int percent) {
   u8g2.clearBuffer();
-  progressBar(F("Updating Firmware"),percent);
-  centreText(F("*DO NOT REMOVE POWER*"),24);
+  progressBar("Updating Firmware",percent);
+  centreText("*DO NOT REMOVE POWER*",24);
   u8g2.sendBuffer();
 }
 
@@ -601,20 +600,43 @@ String getBuildTime() {
 }
 
 void checkPostWebUpgrade() {
-  String prevGUI = loadFile(F("/webver"));
-  prevGUI.trim();
-  String currentGUI = String(WEBAPPVER_MAJOR) + F(".") + String(WEBAPPVER_MINOR);
-  if (prevGUI != currentGUI) {
-    // clean up old/dev files
-    progressBar(F("Cleaning up..."),45);
-    LittleFS.remove(F("/index_d.htm"));
-    LittleFS.remove(F("/index.htm"));
-    LittleFS.remove(F("/keys.htm"));
-    LittleFS.remove(F("/nrelogo.webp"));
-    LittleFS.remove(F("/btlogo.webp"));
-    LittleFS.remove(F("/nr.webp"));
-    LittleFS.remove(F("/favicon.png"));
-    saveFile(F("/webver"),currentGUI);
+  JsonDocument doc;
+  char prevFirmware[15] = "B0.0-W0.0";
+  char prevGUI[8];
+  char currentGUI[8];
+
+  if (LittleFS.exists("/fw.json")) {
+    File file = LittleFS.open("/fw.json", "r");
+    if (file) {
+      DeserializationError error = deserializeJson(doc, file);
+      if (!error) {
+        JsonObject settings = doc.as<JsonObject>();
+
+        if (settings["fw"].is<const char*>()) {
+          strlcpy(prevFirmware,settings["fw"],sizeof(prevFirmware));
+        }
+      }
+      file.close();
+    }
+  }
+
+  if (prevFirmware[0]) {
+    sscanf(prevFirmware,"%*[^ -]-%s",prevGUI);
+    sprintf(currentGUI,"W%d.%d",WEBAPPVER_MAJOR,WEBAPPVER_MINOR);
+    if (strcmp(prevGUI,currentGUI)) {
+      // clean up old/dev files
+      progressBar("Cleaning up following upgrade",45);
+      LittleFS.remove("/index_d.htm");
+      LittleFS.remove("/index.htm");
+      LittleFS.remove("/keys.htm");
+      LittleFS.remove("/nrelogo.webp");
+      LittleFS.remove("/rdglogo.webp");
+      LittleFS.remove("/btlogo.webp");
+      LittleFS.remove("/nr.webp");
+      LittleFS.remove("/favicon.svg");
+      LittleFS.remove("/favicon.png");
+      LittleFS.remove("/webver");
+    }
   }
 }
 
@@ -626,15 +648,6 @@ void doClockCheck() {
       nextClockUpdate=millis()+500;
     }
   }
-}
-
-// Callback from the raildataXMLclient library when processing data. As this can take some time, this callback is used to keep the clock working
-// and to provide progress on the initial load at boot
-void raildataCallback(int stage, int nServices) {
-  if (firstLoad) {
-    int percent = ((nServices*20)/MAXBOARDSERVICES)+80;
-    progressBar(F("Initialising Nat'l Rail"),percent);
-  } else doClockCheck();
 }
 
 // Stores/updates the url of our Web GUI
@@ -651,20 +664,25 @@ void updateMyUrl() {
 void loadApiKeys() {
   JsonDocument doc;
 
-  if (LittleFS.exists(F("/apikeys.json"))) {
-    File file = LittleFS.open(F("/apikeys.json"), "r");
+  if (LittleFS.exists("/apikeys.json")) {
+    File file = LittleFS.open("/apikeys.json", "r");
     if (file) {
       DeserializationError error = deserializeJson(doc, file);
       if (!error) {
         JsonObject settings = doc.as<JsonObject>();
 
-        if (settings[F("nrToken")].is<const char*>()) {
-          strlcpy(nrToken, settings[F("nrToken")], sizeof(nrToken));
+        if (settings["rdmDepKey"].is<const char*>()) {
+          rdmDeparturesApiKey = settings["rdmDepKey"].as<String>();
         }
 
-        if (settings[F("owmToken")].is<const char*>()) {
-          openWeatherMapApiKey = settings[F("owmToken")].as<String>();
+        if (settings["nrToken"].is<const char*>()) {
+          strlcpy(nrToken, settings["nrToken"], sizeof(nrToken));
         }
+
+        if (settings["owmToken"].is<const char*>()) {
+          strlcpy(openWeatherMapApiKey, settings["owmToken"], sizeof(openWeatherMapApiKey));
+        }
+
         apiKeys = true;
 
       } else {
@@ -675,11 +693,24 @@ void loadApiKeys() {
   }
 }
 
-// Write a default config file so that the Web GUI works initially (force Tube mode if no NR token)
+void resetLocationIds() {
+  strcpy(crsCode,"");
+  strcpy(busAtco,"");
+  railIsSet = false;
+  busIsSet = false;
+}
+
+void saveFirmwareInfo() {
+  String fw = "{\"fw\":\"B" + String(VERSION_MAJOR) + "." + String(VERSION_MINOR) + "-W" + String(WEBAPPVER_MAJOR) + "." + String(WEBAPPVER_MINOR) + "\"}";
+  saveFile("/fw.json",fw);
+}
+
+// Write a default config file so that the Web GUI works initially (force bus mode if no NR token)
 void writeDefaultConfig() {
-    String defaultConfig = "{\"crs\":\"\",\"station\":\"\",\"lat\":0,\"lon\":0,\"weather\":" + String((openWeatherMapApiKey.length())?"true":"false") + F(",\"showBus\":false,\"update\":true,\"brightness\":20,\"mode\":") + String((!nrToken[0])?"1":"0") + "}";
-    saveFile(F("/config.json"),defaultConfig);
-    strcpy(crsCode,"");
+    String defaultConfig = "{\"crs\":\"\",\"station\":\"\",\"lat\":0,\"lon\":0,\"weather\":true,\"showBus\":false,\"update\":true,\"brightness\":20,\"mode\":" + String((!nrToken[0] && rdmDeparturesApiKey=="")?"1":"0") + "}";
+    saveFile("/config.json",defaultConfig);
+    resetLocationIds();
+    saveFirmwareInfo();
 }
 
 // Load the configuration settings (if they exist, if not create a default set for the Web GUI page to read)
@@ -689,47 +720,56 @@ void loadConfig() {
   // Set defaults
   strcpy(hostname,defaultHostname);
   timezone = String(ukTimezone);
+  resetLocationIds();
 
-  if (LittleFS.exists(F("/config.json"))) {
-    File file = LittleFS.open(F("/config.json"), "r");
+  if (LittleFS.exists("/config.json")) {
+    File file = LittleFS.open("/config.json", "r");
     if (file) {
       DeserializationError error = deserializeJson(doc, file);
       if (!error) {
         JsonObject settings = doc.as<JsonObject>();
 
-        if (settings[F("crs")].is<const char*>())        strlcpy(crsCode, settings[F("crs")], sizeof(crsCode));
-        if (settings[F("callingCrs")].is<const char*>()) strlcpy(callingCrsCode, settings[F("callingCrs")], sizeof(callingCrsCode));
-        if (settings[F("callingStation")].is<const char*>()) strlcpy(callingStation, settings[F("callingStation")], sizeof(callingStation));
-        if (settings[F("platformFilter")].is<const char*>())  strlcpy(platformFilter, settings[F("platformFilter")], sizeof(platformFilter));
-        if (settings[F("hostname")].is<const char*>())   strlcpy(hostname, settings[F("hostname")], sizeof(hostname));
-        if (settings[F("wsdlHost")].is<const char*>())   strlcpy(wsdlHost, settings[F("wsdlHost")], sizeof(wsdlHost));
-        if (settings[F("wsdlAPI")].is<const char*>())    strlcpy(wsdlAPI, settings[F("wsdlAPI")], sizeof(wsdlAPI));
-        if (settings[F("showBus")].is<bool>())           enableBus = settings[F("showBus")];
-        if (settings[F("fastRefresh")].is<bool>())       apiRefreshRate = settings[F("fastRefresh")] ? FASTDATAUPDATEINTERVAL : DATAUPDATEINTERVAL;
-        if (settings[F("weather")].is<bool>() && openWeatherMapApiKey.length())
-                                                    weatherEnabled = settings[F("weather")];
-        if (settings[F("update")].is<bool>())            firmwareUpdates = settings[F("update")];
-        if (settings[F("brightness")].is<int>())         brightness = settings[F("brightness")];
-        if (settings[F("lat")].is<float>())              stationLat = settings[F("lat")];
-        if (settings[F("lon")].is<float>())              stationLon = settings[F("lon")];
+        if (settings["crs"].is<const char*>())        strlcpy(crsCode, settings["crs"], sizeof(crsCode));
+        if (settings["callingCrs"].is<const char*>()) strlcpy(callingCrsCode, settings["callingCrs"], sizeof(callingCrsCode));
+        if (settings["callingStation"].is<const char*>()) strlcpy(callingStation, settings["callingStation"], sizeof(callingStation));
+        if (settings["platformFilter"].is<const char*>())  strlcpy(platformFilter, settings["platformFilter"], sizeof(platformFilter));
+        if (settings["hostname"].is<const char*>())   strlcpy(hostname, settings["hostname"], sizeof(hostname));
+        if (settings["wsdlHost"].is<const char*>())   strlcpy(wsdlHost, settings["wsdlHost"], sizeof(wsdlHost));
+        if (settings["wsdlAPI"].is<const char*>())    strlcpy(wsdlAPI, settings["wsdlAPI"], sizeof(wsdlAPI));
+        if (settings["showBus"].is<bool>())           enableBus = settings["showBus"];
+        if (settings["fastRefresh"].is<bool>())       apiRefreshRate = settings["fastRefresh"] ? FASTDATAUPDATEINTERVAL : DATAUPDATEINTERVAL;
+        if (settings["weather"].is<bool>())           weatherEnabled = settings["weather"];
+        if (settings["update"].is<bool>())            firmwareUpdates = settings["update"];
+        if (settings["brightness"].is<int>())         brightness = settings["brightness"];
+        if (settings["lat"].is<float>())              stationLat = settings["lat"];
+        if (settings["lon"].is<float>())              stationLon = settings["lon"];
 
-        if (settings[F("mode")].is<int>())               boardMode = settings[F("mode")];
+        if (settings["mode"].is<int>())               boardMode = settings["mode"];
 
-        if (settings[F("busId")].is<const char*>())      strlcpy(busAtco, settings[F("busId")], sizeof(busAtco));
-        if (settings[F("busName")].is<const char*>())    busName = String(settings[F("busName")]);
-        if (settings[F("busLat")].is<float>())           busLat = settings[F("busLat")];
-        if (settings[F("busLon")].is<float>())           busLon = settings[F("busLon")];
-        if (settings[F("busFilter")].is<const char*>())  strlcpy(busFilter, settings[F("busFilter")], sizeof(busFilter));
+        if (settings["busId"].is<const char*>())      strlcpy(busAtco, settings["busId"], sizeof(busAtco));
+        if (settings["busName"].is<const char*>())    busName = String(settings["busName"]);
+        if (settings["busLat"].is<float>())           busLat = settings["busLat"];
+        if (settings["busLon"].is<float>())           busLon = settings["busLon"];
+        if (settings["busFilter"].is<const char*>())  strlcpy(busFilter, settings["busFilter"], sizeof(busFilter));
 
-        if (settings[F("noScroll")].is<bool>())          noScrolling = settings[F("noScroll")];
-        if (settings[F("flip")].is<bool>())              flipScreen = settings[F("flip")];
-        if (settings[F("TZ")].is<const char*>())         timezone = settings[F("TZ")].as<String>();
+        if (settings["noScroll"].is<bool>())          noScrolling = settings["noScroll"];
+        if (settings["flip"].is<bool>())              flipScreen = settings["flip"];
+        if (settings["TZ"].is<const char*>())         timezone = settings["TZ"].as<String>();
+
+        if (settings["dataSource"].is<int>())         useRDMclient = (settings["dataSource"]?1:0);
+        // validate the data source against which api keys are available
+        if (nrToken[0] && rdmDeparturesApiKey=="") useRDMclient = false;
+        else if (!nrToken[0] && rdmDeparturesApiKey!="") useRDMclient = true;
+
+        if (strlen(crsCode)) railIsSet = true;
+        if (strlen(busAtco)) busIsSet = true;
+
       } else {
         // JSON deserialization failed - TODO
       }
       file.close();
     }
-  } else if (nrToken[0]) writeDefaultConfig();
+  } else if (apiKeys) writeDefaultConfig();
 }
 
 // Soft reset/reload
@@ -768,54 +808,30 @@ void softResetBoard() {
   line3Service=0;
   prevService=0;
   if (!weatherEnabled) strcpy(weatherMsg,"");
-  if (previousMode!=boardMode) {
-    // Board mode has changed!
-    switch (previousMode) {
-      case MODE_RAIL:
-        // Delete the NR client from memory
-        delete raildata;
-        raildata = nullptr;
-        break;
-
-      case MODE_BUS:
-        // Delete the Bus client from memory
-        delete busdata;
-        busdata = nullptr;
-        break;
-    }
-
-    switch (boardMode) {
-      case MODE_RAIL:
-        // Create the NR client
-        raildata = new raildataXmlClient();
-        if (boardMode == MODE_RAIL) {
-          int res = raildata->init(wsdlHost, wsdlAPI, &raildataCallback);
-          if (res != UPD_SUCCESS) {
-            showWsdlFailureScreen();
-             while (true) { server.handleClient(); yield();}
-          }
-        }
-        break;
-
-      case MODE_BUS:
-        // Create the Bus client
-        busdata = new busDataClient();
-        break;
-    }
-  }
 
   switch (boardMode) {
     case MODE_RAIL:
       // Create a cleaned platform filter (if any)
-      raildata->cleanFilter(platformFilter,cleanPlatformFilter,sizeof(platformFilter));
+      rdmRailData.cleanFilter(platformFilter,cleanPlatformFilter,sizeof(platformFilter));
+      progressBar("Initialising Nat'l Rail",70);
+      if (!useRDMclient) {
+        // Using legacy XML client
+        int res = darwinRailData.init(wsdlHost, wsdlAPI);
+        if (res != UPD_SUCCESS) {
+          showWsdlFailureScreen();
+          while (true) { delay(1);}
+        }
+      }
       break;
 
     case MODE_BUS:
-      progressBar(F("Initialising BusTimes"),70);
+      //checkWeatherUpdate(prevLat,prevLon);
+      progressBar("Initialising BusTimes",70);
       // Create a cleaned filter
-      busdata->cleanFilter(busFilter,cleanBusFilter,sizeof(busFilter));
+      busdata.cleanFilter(busFilter,cleanBusFilter,sizeof(busFilter));
       break;
   }
+
   station.numServices=0;
   messages.numMessages=0;
 }
@@ -849,27 +865,12 @@ bool checkForFirmwareUpdate() {
 
   if (!isFirmwareUpdateAvailable()) return result;
 
-  // Find the firmware binary in the release assets
-  String updatePath="";
-  for (int i=0;i<ghUpdate.releaseAssets;i++){
-    if (ghUpdate.releaseAssetName[i] == "firmware.bin") {
-      updatePath = ghUpdate.releaseAssetURL[i];
-      break;
-    }
-  }
-  if (updatePath.length()==0) {
-    //  No firmware binary in release assets
-    return result;
-  }
+  // Check that we found the firmware.bin file in the release assets
+  if (ghUpdate.firmwareURL.length()==0) return result;
 
-  unsigned long tmr=millis()+1000;
   for (int i=30;i>=0;i--) {
     showFirmwareUpdateWarningScreen(i);
-    while (tmr>millis()) {
-      yield();
-      server.handleClient();
-    }
-    tmr=millis()+1000;
+    delay(1000);
   }
   u8g2.clearDisplay();
   prevProgressBarPosition=0;
@@ -879,7 +880,7 @@ bool checkForFirmwareUpdate() {
   httpUpdate.onProgress(update_progress);
   httpUpdate.rebootOnUpdate(false); // Don't auto reboot, we'll handle it
 
-  HTTPUpdateResult ret = httpUpdate.handleUpdate(client, updatePath, ghUpdate.accessToken);
+  HTTPUpdateResult ret = httpUpdate.handleUpdate(client, ghUpdate.firmwareURL);
   switch (ret) {
     case HTTP_UPDATE_FAILED:
       char msg[60];
@@ -916,13 +917,24 @@ bool checkForFirmwareUpdate() {
  * Station Board functions - pulling updates and animating the Departures Board main display
  */
 
+void updateRailDepartures() {
+  if (useRDMclient) rdmRailData.loadDepartures(&station,&messages);
+  else darwinRailData.loadDepartures(&station,&messages);
+}
+
 // Request a data update via the raildataClient
 bool getStationBoard() {
   if (!firstLoad) showUpdateIcon(true);
-  lastUpdateResult = raildata->updateDepartures(&station,&messages,crsCode,nrToken,MAXBOARDSERVICES,enableBus,callingCrsCode,cleanPlatformFilter);
+  if (useRDMclient) {
+    lastUpdateResult = rdmRailData.fetchDepartures(&station,&messages,crsCode,rdmDeparturesApiKey,"",MAXBOARDSERVICES,enableBus,callingCrsCode,cleanPlatformFilter,0,false,true);
+  } else {
+    lastUpdateResult = darwinRailData.fetchDepartures(&station,&messages,crsCode,nrToken,MAXBOARDSERVICES,enableBus,callingCrsCode,cleanPlatformFilter,0,false,true);
+  }
+  //lastUpdateResult = raildata->updateDepartures(&station,&messages,crsCode,nrToken,MAXBOARDSERVICES,enableBus,callingCrsCode,cleanPlatformFilter);
   nextDataUpdate = millis()+apiRefreshRate;
-  if (lastUpdateResult == UPD_SUCCESS || lastUpdateResult == UPD_NO_CHANGE) {
+  if (lastUpdateResult == UPD_SUCCESS || lastUpdateResult == UPD_SEC_CHANGE|| lastUpdateResult == UPD_NO_CHANGE) {
     showUpdateIcon(false);
+    updateRailDepartures();
     lastDataLoadTime=millis();
     noDataLoaded=false;
     dataLoadSuccess++;
@@ -935,7 +947,7 @@ bool getStationBoard() {
     return false;
   } else if (lastUpdateResult == UPD_UNAUTHORISED) {
     showTokenErrorScreen();
-    while (true) { server.handleClient(); yield();}
+    while (true) { delay(100); }
   } else {
     showUpdateIcon(false);
     dataLoadFailure++;
@@ -965,7 +977,7 @@ void drawPrimaryService(bool showVia) {
     }
     // check if there's a trailing space left
     if (clipDestination[strlen(clipDestination)-1] == ' ') clipDestination[strlen(clipDestination)-1] = '\0';
-    strcat(clipDestination,"\x83");
+    strcat(clipDestination,"\x85");
   }
   u8g2.drawStr(destPos,LINE1-1,clipDestination);
 }
@@ -991,7 +1003,7 @@ void drawServiceLine(int line, int y) {
       }
       // check if there's a trailing space left
       if (clipDestination[strlen(clipDestination)-1] == ' ') clipDestination[strlen(clipDestination)-1] = '\0';
-      strcat(clipDestination,"\x83");
+      strcat(clipDestination,"\x85");
     }
     u8g2.drawStr(destPos,y-1,clipDestination);
   } else {
@@ -1000,7 +1012,7 @@ void drawServiceLine(int line, int y) {
       centreText(weatherMsg,y);
     } else {
       // We're showing the mandatory attribution
-      centreText(nrAttributionn,y);
+      if (!useRDMclient) centreText(nrAttributionn,y); else centreText(rdgAttribution,y);
     }
   }
 }
@@ -1110,7 +1122,7 @@ void drawStationBoard() {
     }
   } else {
     blankArea(0,LINE1,SCREEN_WIDTH,LINE4-LINE1);
-    centreText(F("No scheduled services."),LINE1);
+    centreText("No scheduled services.",LINE1);
     numMessages = messages.numMessages;
     for (int i=0;i<messages.numMessages;i++) {
       strcpy(line2[i],messages.messages[i]);
@@ -1122,19 +1134,6 @@ void drawStationBoard() {
   u8g2.sendBuffer();
 }
 
-// Callback from the busDataClient library when processing data. Shows progress at startup and keeps clock running
-void busCallback() {
-  if (firstLoad) {
-    if (startupProgressPercent<95) {
-      startupProgressPercent+=5;
-      progressBar(F("Initialising BusTimes"),startupProgressPercent);
-    }
-  } else if (millis()>nextClockUpdate) {
-    nextClockUpdate = millis()+500;
-    drawCurrentTime(true);
-  }
-}
-
 /*
  *
  * Bus Departures Board
@@ -1142,10 +1141,12 @@ void busCallback() {
  */
 bool getBusDeparturesBoard() {
   if (!firstLoad) showUpdateIcon(true);
-  lastUpdateResult = busdata->updateDepartures(&station,busAtco,cleanBusFilter,&busCallback);
+  //lastUpdateResult = busdata->updateDepartures(&station,busAtco,cleanBusFilter,&busCallback);
+  lastUpdateResult = busdata.fetchDepartures(&station,busAtco,cleanBusFilter);
   nextDataUpdate = millis()+BUSDATAUPDATEINTERVAL; // default update freq
-  if (lastUpdateResult == UPD_SUCCESS || lastUpdateResult == UPD_NO_CHANGE) {
+  if (lastUpdateResult == UPD_SUCCESS || lastUpdateResult == UPD_SEC_CHANGE || lastUpdateResult == UPD_NO_CHANGE) {
     showUpdateIcon(false);
+    busdata.loadDepartures(&station);
     lastDataLoadTime=millis();
     noDataLoaded=false;
     dataLoadSuccess++;
@@ -1165,7 +1166,7 @@ bool getBusDeparturesBoard() {
     return false;
   } else if (lastUpdateResult == UPD_UNAUTHORISED) {
     showTokenErrorScreen();
-    while (true) { server.handleClient(); yield();}
+    while (true) { delay(200); }
   } else {
     showUpdateIcon(false);
     dataLoadFailure++;
@@ -1195,7 +1196,7 @@ void drawBusService(int serviceId, int y, int destPos) {
       }
       // check if there's a trailing space left
       if (clipDestination[strlen(clipDestination)-1] == ' ') clipDestination[strlen(clipDestination)-1] = '\0';
-      strcat(clipDestination,"\x83");
+      strcat(clipDestination,"\x85");
     }
     u8g2.drawStr(destPos,y-1,clipDestination);
   }
@@ -1234,7 +1235,7 @@ void drawBusDeparturesBoard() {
       drawBusService(0,LINE1,busDestX);
       if (station.numServices>1) drawBusService(1,LINE2,busDestX);
     } else {
-      centreText(F("No scheduled services"),LINE1-1);
+      centreText("No scheduled services",LINE1-1);
     }
   }
   messages.numMessages=0;
@@ -1250,182 +1251,75 @@ void drawBusDeparturesBoard() {
  */
 
 // Helper function for returning text status messages
-void sendResponse(int code, const __FlashStringHelper* msg) {
-  server.send(code, contentTypeText, msg);
-}
-
-void sendResponse(int code, String msg) {
-  server.send(code, contentTypeText, msg);
+void sendResponse(int code, String msg, AsyncWebServerRequest *request) {
+  request->send(code,contentTypeText,msg);
 }
 
 // Return the correct MIME type for a file name
 String getContentType(String filename) {
-  if (server.hasArg(F("download"))) {
-    return F("application/octet-stream");
-  } else if (filename.endsWith(F(".htm"))) {
-    return F("text/html");
-  } else if (filename.endsWith(F(".html"))) {
-    return F("text/html");
-  } else if (filename.endsWith(F(".css"))) {
-    return F("text/css");
-  } else if (filename.endsWith(F(".js"))) {
-    return F("application/javascript");
-  } else if (filename.endsWith(F(".png"))) {
-    return F("image/png");
-  } else if (filename.endsWith(F(".gif"))) {
-    return F("image/gif");
-  } else if (filename.endsWith(F(".jpg"))) {
-    return F("image/jpeg");
-  } else if (filename.endsWith(F(".ico"))) {
-    return F("image/x-icon");
-  } else if (filename.endsWith(F(".xml"))) {
-    return F("text/xml");
-  } else if (filename.endsWith(F(".pdf"))) {
-    return F("application/x-pdf");
-  } else if (filename.endsWith(F(".zip"))) {
-    return F("application/x-zip");
-  } else if (filename.endsWith(F(".json"))) {
-    return F("application/json");
-  } else if (filename.endsWith(F(".gz"))) {
-    return F("application/x-gzip");
-  } else if (filename.endsWith(F(".svg"))) {
-    return F("image/svg+xml");
-  } else if (filename.endsWith(F(".webp"))) {
-    return F("image/webp");
+  if (filename.endsWith(".htm")) {
+    return "text/html";
+  } else if (filename.endsWith(".html")) {
+    return "text/html";
+  } else if (filename.endsWith(".css")) {
+    return "text/css";
+  } else if (filename.endsWith(".js")) {
+    return "application/javascript";
+  } else if (filename.endsWith(".png")) {
+    return "image/png";
+  } else if (filename.endsWith(".gif")) {
+    return "image/gif";
+  } else if (filename.endsWith(".jpg")) {
+    return "image/jpeg";
+  } else if (filename.endsWith(".ico")) {
+    return "image/x-icon";
+  } else if (filename.endsWith(".xml")) {
+    return "text/xml";
+  } else if (filename.endsWith(".pdf")) {
+    return "application/x-pdf";
+  } else if (filename.endsWith(".zip")) {
+    return "application/x-zip";
+  } else if (filename.endsWith(".json")) {
+    return "application/json";
+  } else if (filename.endsWith(".gz")) {
+    return "application/x-gzip";
+  } else if (filename.endsWith(".svg")) {
+    return "image/svg+xml";
+  } else if (filename.endsWith(".webp")) {
+    return "image/webp";
   }
-  return F("text/plain");
+  return "text/plain";
 }
 
 // Stream a file from the file system
-bool handleStreamFile(String filename) {
+bool handleStreamFile(String filename, AsyncWebServerRequest *request) {
   if (LittleFS.exists(filename)) {
-    File file = LittleFS.open(filename,"r");
     String contentType = getContentType(filename);
-    server.streamFile(file, contentType);
-    file.close();
+    request->send(LittleFS,filename,contentType);
     return true;
   } else return false;
 }
 
-// Stream a file stored in PROGMEM flash (default graphics are now included in the firmware image)
-void handleStreamFlashFile(String filename, const uint8_t *filedata, size_t contentLength) {
-
+// Stream a file stored in flash (default graphics are now included in the firmware image)
+void handleStreamFlashFile(String filename, const uint8_t *filedata, size_t contentLength, AsyncWebServerRequest *request) {
   String contentType = getContentType(filename);
-  WiFiClient client = server.client();
-  // Send the headers
-  client.println(F("HTTP/1.1 200 OK"));
-  client.print(F("Content-Type: "));
-  client.println(contentType);
-  client.print(F("Content-Length: "));
-  client.println(contentLength);
-  client.println(F("Connection: close"));
-  client.println(); // End of headers
-
-  const size_t chunkSize = 512;
-  uint8_t buffer[chunkSize];
-  size_t sent = 0;
-
-  while (sent < contentLength) {
-    size_t toSend = min(chunkSize, contentLength - sent);
-    // Copy from PROGMEM to buffer
-    for (size_t i=0;i<toSend;i++) {
-      buffer[i] = pgm_read_byte(&filedata[sent + i]);
-    }
-    client.write(buffer, toSend);
-    sent += toSend;
-  }
+  AsyncWebServerResponse *response = request->beginResponse(200, contentType, filedata, contentLength);
+  response->addHeader("Cache-Control", "public,max-age=3600,s-maxage=3600");
+  request->send(response);
 }
 
-// Save the API keys POSTed from the keys.htm page
-// If an OWM key is passed, this is tested before being committed to the file system. It's not possible
-// to check the National Rail token at this point.
-//
-void handleSaveKeys() {
-  String newJSON, owmToken, nrToken;
-  JsonDocument doc;
-  bool result = true;
-  String msg = F("API keys saved successfully.");
-
-  if ((server.method() == HTTP_POST) && (server.hasArg("plain"))) {
-    newJSON = server.arg("plain");
-    // Deserialise to get the OWM API key
-    DeserializationError error = deserializeJson(doc, newJSON);
-    if (!error) {
-      JsonObject settings = doc.as<JsonObject>();
-      if (settings[F("owmToken")].is<const char*>()) {
-        owmToken = settings[F("owmToken")].as<String>();
-        if (owmToken.length()) {
-          // Check if this is a valid token...
-          if (!currentWeather.updateWeather(owmToken, "51.52", "-0.13")) {
-            msg = F("The OpenWeather Map API key is not valid. Please check you have copied your key correctly. It may take up to 30 minutes for a newly created key to become active.\n\nNo changes have been saved.");
-            result = false;
-          }
-        }
-      }
-      if (result) {
-        if (!saveFile(F("/apikeys.json"),newJSON)) {
-          msg = F("Failed to save the API keys to the file system (file system corrupt or full?)");
-          result = false;
-        } else {
-          nrToken = settings[F("nrToken")].as<String>();
-          if (!nrToken.length()) msg+=F("\n\nNote: Only Bus Departures will be available without a National Rail token.");
-        }
-      }
-    } else {
-      msg = F("Invalid JSON format. No changes have been saved.");
-      result = false;
-    }
-    if (result) {
-      // Load/Update the API Keys in memory
-      loadApiKeys();
-      // If all location codes are blank we're in the setup process. If not, the keys have been changed so just reboot.
-      if (!crsCode[0] && !busAtco[0]) {
-        sendResponse(200,msg);
-        writeDefaultConfig();
-        showSetupCrsHelpScreen();
-      } else {
-        msg += F("\n\nThe system will now restart.");
-        sendResponse(200,msg);
-        delay(500);
-        ESP.restart();
-      }
-    } else {
-      sendResponse(400,msg);
-    }
-  } else {
-    sendResponse(400,F("Invalid"));
-  }
-}
-
-// Save configuration setting POSTed from index.htm
-void handleSaveSettings() {
-  String newJSON;
-
-  if ((server.method() == HTTP_POST) && (server.hasArg("plain"))) {
-    newJSON = server.arg("plain");
-    saveFile(F("/config.json"),newJSON);
-    if ((!crsCode[0] && !busAtco[0]) || (!nrToken[0] && boardMode==MODE_RAIL) || server.hasArg("reboot")) {
-      // First time setup or base config change, we need a full reboot
-      sendResponse(200,F("Configuration saved. The system will now restart."));
-      delay(1000);
-      ESP.restart();
-    } else {
-      sendResponse(200,F("Configuration updated. The system will update shortly."));
-      softResetBoard();
-    }
-  } else {
-    // Something went wrong saving the config file
-    sendResponse(400,F("The configuration could not be updated. The system will restart."));
-    delay(1000);
-    ESP.restart();
-  }
+void handleStreamGzipFlashFile(String filename, const uint8_t *filedata, size_t contentLength, AsyncWebServerRequest *request) {
+  String contentType = getContentType(filename);
+  AsyncWebServerResponse *response = request->beginResponse(200, contentType, filedata, contentLength);
+  response->addHeader("Content-Encoding", "gzip");
+  request->send(response);
 }
 
 /*
  * Expose the file system via the Web GUI with some basic functions for directory browsing, file reading and deletion.
  */
 
- // Return storage information
+// Return storage information
 String getFSInfo() {
   char info[70];
 
@@ -1434,96 +1328,63 @@ String getFSInfo() {
 }
 
 // Send a basic directory listing to the browser
-void handleFileList() {
+void handleFileList(AsyncWebServerRequest *request) {
   String path;
-  if (!server.hasArg("dir")) path="/"; else path = server.arg("dir");
+  if (!request->hasParam("dir")) path="/"; else path = request->getParam("dir")->value();
   File root = LittleFS.open(path);
 
-  String output=F("<html><body style=\"font-family:Helvetica,Arial,sans-serif\"><h2>Tiny Departures Board File System</h2>");
+  String output="<html><body style=\"font-family:Helvetica,Arial,sans-serif\"><h2>Tiny Departures Board File System</h2>";
   if (!root) {
-    output+=F("<p>Failed to open directory</p>");
+    output+="<p>Failed to open directory</p>";
   } else if (!root.isDirectory()) {
-    output+=F("<p>Not a directory</p>");
+    output+="<p>Not a directory</p>";
   } else {
-    output+=F("<table>");
+    output+="<table>";
     File file = root.openNextFile();
     while (file) {
-      output+=F("<tr><td>");
+      output+="<tr><td>";
       if (file.isDirectory()) {
-        output+="[DIR]</td><td><a href=\"/rmdir?f=" + String(file.path()) + F("\" title=\"Delete\">X</a></td><td><a href=\"/dir?dir=") + String(file.path()) + F("\">") + String(file.name()) + F("</a></td></tr>");
+        output+="[DIR]</td><td><a href=\"/rmdir?f=" + String(file.path()) + "\" title=\"Delete\">X</a></td><td><a href=\"/dir?dir=" + String(file.path()) + "\">" + String(file.name()) + "</a></td></tr>";
       } else {
-        output+=String(file.size()) + F("</td><td><a href=\"/del?f=")+ String(file.path()) + F("\" title=\"Delete\">X</a></td><td><a href=\"/cat?f=") + String(file.path()) + F("\">") + String(file.name()) + F("</a></td></tr>");
+        output+=String(file.size()) + "</td><td><a href=\"/del?f="+ String(file.path()) + "\" title=\"Delete\">X</a></td><td><a href=\"/cat?f=" + String(file.path()) + "\">" + String(file.name()) + "</a></td></tr>";
       }
       file = root.openNextFile();
     }
   }
 
-  output += F("</table><br>");
-  output += getFSInfo() + F("<p><a href=\"/upload\">Upload</a> a file</p></body></html>");
-  server.send(200,contentTypeHtml,output);
+  output += "</table><br>";
+  output += getFSInfo() + "<p><a href=\"/upload\">Upload</a> a file</p></body></html>";
+  request->send(200,contentTypeHtml,output);
 }
 
 // Stream a file to the browser
-void handleCat() {
-  String filename;
-
-  if (server.hasArg(F("f"))) {
-    handleStreamFile(server.arg("f"));
-  } else sendResponse(404,F("Not found"));
+void handleCat(AsyncWebServerRequest *request) {
+  if (request->hasParam("f")) {
+    String filename = request->getParam("f")->value();
+    handleStreamFile(filename,request);
+  } else sendResponse(404,"Not found",request);
 }
 
 // Delete a file from the file system
-void handleDelete() {
-  String filename;
-
-  if (server.hasArg(F("f"))) {
-    if (LittleFS.remove(server.arg(F("f")))) {
+void handleDelete(AsyncWebServerRequest *request) {
+  if (request->hasParam("f")) {
+    String filename = request->getParam("f")->value();
+    if (LittleFS.remove(filename)) {
       // Successfully removed go back to directory listing
-      server.sendHeader(F("Location"),F("/dir"));
-      server.send(303);
-    } else sendResponse(400,F("Failed to delete file"));
-  } else sendResponse(404,F("Not found"));
-
+      request->redirect("/dir");
+    } else sendResponse(400,"Failed to delete file",request);
+  } else sendResponse(404,"Not found",request);
 }
 
 // Format the file system
-void handleFormatFFS() {
+void handleFormatFFS(AsyncWebServerRequest *request) {
   String message;
 
   if (LittleFS.format()) {
-    message=F("File System was successfully formatted\n\n");
+    message="File System was successfully formatted\n\n";
     message+=getFSInfo();
-  } else message=F("File System could not be formatted!");
-  sendResponse(200,message);
-}
-
-// Upload a file from the browser
-void handleFileUpload() {
-  HTTPUpload& upload = server.upload();
-  if (upload.status == UPLOAD_FILE_START) {
-    String filename = upload.filename;
-    if (!filename.startsWith(F("/"))) {
-      filename = "/" + filename;
-    }
-    fsUploadFile = LittleFS.open(filename, "w");
-    filename = String();
-  } else if (upload.status == UPLOAD_FILE_WRITE) {
-    if (fsUploadFile) {
-      fsUploadFile.write(upload.buf, upload.currentSize);
-    }
-  } else if (upload.status == UPLOAD_FILE_END) {
-    WiFiClient client = server.client();
-    if (fsUploadFile) {
-      fsUploadFile.close();
-      client.println(F("HTTP/1.1 302 Found"));
-      client.println(F("Location: /success"));
-      client.println(F("Connection: close"));
-    } else {
-      client.println(F("HTTP/1.1 500 Could not create file"));
-      client.println(F("Connection: close"));
-    }
-    client.println();
-  }
+  } else message="File System could not be formatted!";
+  sendResponse(200,message,request);
 }
 
 /*
@@ -1531,19 +1392,57 @@ void handleFileUpload() {
  */
 
 // Fallback function for browser requests
-void handleNotFound() {
-  if ((LittleFS.exists(server.uri())) && (server.method() == HTTP_GET)) handleStreamFile(server.uri());
-  else if (server.uri() == F("/keys.htm")) handleStreamFlashFile(server.uri(), keyshtm, sizeof(keyshtm));
-  else if (server.uri() == F("/index.htm")) handleStreamFlashFile(server.uri(), indexhtm, sizeof(indexhtm));
-  else if (server.uri() == F("/nrelogo.webp")) handleStreamFlashFile(server.uri(), nrelogo, sizeof(nrelogo));
-  else if (server.uri() == F("/btlogo.webp")) handleStreamFlashFile(server.uri(), btlogo, sizeof(btlogo));
-  else if (server.uri() == F("/nr.webp")) handleStreamFlashFile(server.uri(), nricon, sizeof(nricon));
-  else if (server.uri() == F("/favicon.png")) handleStreamFlashFile(server.uri(), faviconpng, sizeof(faviconpng));
-  else sendResponse(404,F("Not Found"));
+void handleNotFound(AsyncWebServerRequest *request) {
+  if ((LittleFS.exists(request->url())) && (request->method() == HTTP_GET)) handleStreamFile(request->url(),request);
+  else if (request->url() == "/keys.htm") handleStreamGzipFlashFile(request->url(), keyshtm, sizeof(keyshtm),request);
+  else if (request->url() == "/index.htm") handleStreamGzipFlashFile(request->url(), indexhtm, sizeof(indexhtm),request);
+  else if (request->url() == "/nrelogo.webp") handleStreamFlashFile(request->url(), nrelogo, sizeof(nrelogo),request);
+  else if (request->url() == "/rdglogo.webp") handleStreamFlashFile(request->url(), rdglogo, sizeof(nrelogo),request);
+  else if (request->url() == "/btlogo.webp") handleStreamFlashFile(request->url(), btlogo, sizeof(btlogo),request);
+  else if (request->url() == "/nr.webp") handleStreamFlashFile(request->url(), nricon, sizeof(nricon),request);
+  else if (request->url() == "/ibus.webp") handleStreamFlashFile(request->url(), ibus, sizeof(ibus),request);
+  else if (request->url() == "/irail.webp") handleStreamFlashFile(request->url(), irail, sizeof(irail),request);
+  else if (request->url() == "/favicon.png") handleStreamFlashFile(request->url(), faviconpng, sizeof(faviconpng),request);
+  else sendResponse(404,"Not Found",request);
+}
+
+String getResultCodeText(int resultCode) {
+  switch (resultCode) {
+    case UPD_SUCCESS:
+      return "SUCCESS";
+      break;
+    case UPD_NO_CHANGE:
+      return "SUCCESS (NO CHANGES)";
+      break;
+    case UPD_SEC_CHANGE:
+      return "SUCCESS (SECONDARY CHANGES)";
+      break;
+    case UPD_DATA_ERROR:
+      return "DATA ERROR";
+      break;
+    case UPD_UNAUTHORISED:
+      return "UNAUTHORISED";
+      break;
+    case UPD_HTTP_ERROR:
+      return "HTTP ERROR";
+      break;
+    case UPD_INCOMPLETE:
+      return "INCOMPLETE DATA RECEIVED";
+      break;
+    case UPD_NO_RESPONSE:
+      return "NO RESPONSE FROM SERVER";
+      break;
+    case UPD_TIMEOUT:
+      return "TIMEOUT WAITING FOR SERVER";
+      break;
+    default:
+      return "OTHER ERROR";
+      break;
+  }
 }
 
 // Send some useful system & station information to the browser
-void handleInfo() {
+void handleInfo(AsyncWebServerRequest *request) {
   unsigned long uptime = millis();
   char sysUptime[30];
   int days = uptime / msDay ;
@@ -1552,151 +1451,128 @@ void handleInfo() {
 
   sprintf(sysUptime,"%d days, %d hrs, %d min", days,hours,minutes);
 
-  String message = "Hostname: " + String(hostname) + F("\nFirmware version: v") + String(VERSION_MAJOR) + "." + String(VERSION_MINOR) + " " + getBuildTime() + F("\nSystem uptime: ") + String(sysUptime) + F("\nFree Heap: ") + String(ESP.getFreeHeap()) + F("\nFree LittleFS space: ") + String(LittleFS.totalBytes() - LittleFS.usedBytes());
-  message+="\nCore Plaform: " + String(ESP.getCoreVersion()) + F("\nCPU speed: ") + String(ESP.getCpuFreqMHz()) + F("MHz\nCPU Temperature: ") + String(temperatureRead()) + F("\nWiFi network: ") + String(WiFi.SSID()) + F("\nWiFi signal strength: ") + String(WiFi.RSSI()) + F("dB");
+  String message = "Hostname: " + String(hostname) + "\nFirmware version: v"+ String(VERSION_MAJOR) + "." + String(VERSION_MINOR) + " " + getBuildTime() + "\nSystem uptime: "+ String(sysUptime) + "\nFree Heap: "+ String(ESP.getFreeHeap()) + "\nFree LittleFS space: "+ String(LittleFS.totalBytes() - LittleFS.usedBytes());
+  message+="\nCore Plaform: " + String(ESP.getCoreVersion()) + "\nCPU speed: "+ String(ESP.getCpuFreqMHz()) + "MHz\nCPU Temperature: "+ String(temperatureRead()) + "\nWiFi network: "+ String(WiFi.SSID()) + "\nWiFi signal strength: "+ String(WiFi.RSSI()) + "dB";
   getLocalTime(&timeinfo);
 
   sprintf(sysUptime,"%02d:%02d:%02d %02d/%02d/%04d",timeinfo.tm_hour,timeinfo.tm_min,timeinfo.tm_sec,timeinfo.tm_mday,timeinfo.tm_mon+1,timeinfo.tm_year+1900);
   message+="\nSystem clock: " + String(sysUptime);
-  message+="\nCRS station code: " + String(crsCode) + F("\nSuccessful: ") + String(dataLoadSuccess) + F("\nFailures: ") + String(dataLoadFailure) + F("\nTime since last data load: ") + String((int)((millis()-lastDataLoadTime)/1000)) + F(" seconds");
-  if (dataLoadFailure) message+="\nTime since last failure: " + String((int)((millis()-lastLoadFailure)/1000)) + F(" seconds");
-  message+=F("\nLast Result: ");
+  message+="\nCRS station code: " + String(crsCode) + "\nSuccessful: "+ String(dataLoadSuccess) + "\nFailures: "+ String(dataLoadFailure) + "\nTime since last data load: "+ String((int)((millis()-lastDataLoadTime)/1000)) + " seconds";
+  if (dataLoadFailure) message+="\nTime since last failure: " + String((int)((millis()-lastLoadFailure)/1000)) + " seconds";
+  message+="\nLast Result: ";
   switch (boardMode) {
     case MODE_RAIL:
-      message+=raildata->getLastError();
+      if (useRDMclient) message+="RDMClient: " + String(jsonKeyBuffer.lastResultMessage);
+      else message+="darwinClient: " + String(jsonKeyBuffer.lastResultMessage);
       break;
 
     case MODE_BUS:
-      message+=busdata->lastErrorMsg;
+      message+=String(jsonKeyBuffer.lastResultMessage);
       break;
   }
-  message+="\nServices: " + String(station.numServices) + F("\nMessages: ");
+  message+="\nServices: " + String(station.numServices) + "\nMessages: ";
   message+=String(messages.numMessages);
-  message+=F("\n");
+  message+="\n";
   if (boardMode != MODE_BUS) for (int i=0;i<messages.numMessages;i++) message+=String(messages.messages[i]) + "\n";
-  message+=F("\nUpdate result code: ");
+  message+="\nUpdate result code: ";
   switch (lastUpdateResult) {
     case UPD_SUCCESS:
-      message+=F("SUCCESS");
+      message+="SUCCESS";
       break;
     case UPD_NO_CHANGE:
-      message+=F("SUCCESS (NO CHANGES)");
+      message+="SUCCESS (NO CHANGES)";
       break;
     case UPD_DATA_ERROR:
-      message+=F("DATA ERROR");
+      message+="DATA ERROR";
       break;
     case UPD_UNAUTHORISED:
-      message+=F("UNAUTHORISED");
+      message+="UNAUTHORISED";
       break;
     case UPD_HTTP_ERROR:
-      message+=F("HTTP ERROR");
+      message+="HTTP ERROR";
       break;
     case UPD_INCOMPLETE:
-      message+=F("INCOMPLETE JSON RECEIVED");
+      message+="INCOMPLETE JSON RECEIVED";
       break;
     case UPD_NO_RESPONSE:
-      message+=F("NO RESPONSE FROM SERVER");
+      message+="NO RESPONSE FROM SERVER";
       break;
     case UPD_TIMEOUT:
-      message+=F("TIMEOUT WAITING FOR SERVER");
+      message+="TIMEOUT WAITING FOR SERVER";
       break;
     default:
-      message+="ERROR CODE (" + String(lastUpdateResult) + F(")");
+      message+="ERROR CODE (" + String(lastUpdateResult) + ")";
       break;
   }
-  sendResponse(200,message);
+  sendResponse(200,message,request);
 }
 
 // Stream the index.htm page unless we're in first time setup and need the api keys
-void handleRoot() {
+void handleRoot(AsyncWebServerRequest *request) {
   if (!apiKeys) {
-    if (LittleFS.exists(F("/keys.htm"))) handleStreamFile(F("/keys.htm")); else handleStreamFlashFile(F("/keys.htm"),keyshtm,sizeof(keyshtm));
+    if (LittleFS.exists("/keys.htm")) handleStreamFile("/keys.htm",request); else handleStreamGzipFlashFile("/keys.htm",keyshtm,sizeof(keyshtm),request);
   } else {
-    if (LittleFS.exists(F("/index_d.htm"))) handleStreamFile(F("/index_d.htm")); else handleStreamFlashFile(F("/index.htm"),indexhtm,sizeof(indexhtm));
+    if (LittleFS.exists("/index_d.htm")) handleStreamFile("/index_d.htm",request); else handleStreamGzipFlashFile("/index.htm",indexhtm,sizeof(indexhtm),request);
   }
 }
 
 // Send the firmware version to the client (called from index.htm)
-void handleFirmwareInfo() {
-  String response = "{\"firmware\":\"B" + String(VERSION_MAJOR) + "." + String(VERSION_MINOR) + "-W" + String(WEBAPPVER_MAJOR) + "." + String(WEBAPPVER_MINOR) + F(" Build:") + getBuildTime() + F("\"}");
-  server.send(200,contentTypeJson,response);
+void handleFirmwareInfo(AsyncWebServerRequest *request) {
+  String response = "{\"firmware\":\"B" + String(VERSION_MAJOR) + "." + String(VERSION_MINOR) + "-W" + String(WEBAPPVER_MAJOR) + "." + String(WEBAPPVER_MINOR) + "\"}";
+  request->send(200,contentTypeJson,response);
 }
 
 // Force a reboot of the ESP32
-void handleReboot() {
-  sendResponse(200,F("The Departures Board is restarting..."));
-  delay(1000);
-  ESP.restart();
+void handleReboot(AsyncWebServerRequest *request) {
+  sendResponse(200,"The Departures Board is restarting...",request);
+  restartTimer.once(1, []() { ESP.restart(); });
 }
 
 // Erase the stored WiFiManager credentials
-void handleEraseWiFi() {
-  sendResponse(200,F("Erasing stored WiFi. You will need to connect to the \"Departures Board\" network and use WiFi Manager to reconfigure."));
-  delay(1000);
-  WiFiManager wm;
-  wm.resetSettings();
-  delay(500);
-  ESP.restart();
+void handleEraseWiFi(AsyncWebServerRequest *request) {
+  sendResponse(200,"Erasing stored WiFi settings.\n\nYou will need to connect to the \"Departures Board\" network and use WiFi Manager to reconfigure the settings.",request);
+  restartTimer.once(1, []() { WiFiManager wm; wm.resetSettings(); ESP.restart();});
 }
 
 // "Factory reset" the app - delete WiFi, format file system and reboot
-void handleFactoryReset() {
-  sendResponse(200,F("Factory reseting the Departures Board..."));
-  delay(1000);
-  WiFiManager wm;
-  wm.resetSettings();
-  delay(500);
-  LittleFS.format();
-  delay(500);
-  ESP.restart();
+void handleFactoryReset(AsyncWebServerRequest *request) {
+  sendResponse(200,"Factory reseting the Departures Board...",request);
+  restartTimer.once(1, []() { WiFiManager wm; wm.resetSettings(); LittleFS.format(); ESP.restart();});
 }
 
 // Interactively change the brightness of the OLED panel (called from index.htm)
-void handleBrightness() {
-  if (server.hasArg(F("b"))) {
-    int level = server.arg(F("b")).toInt();
+void handleBrightness(AsyncWebServerRequest *request) {
+  if (request->hasParam("b")) {
+    int level = request->getParam("b")->value().toInt();
     if (level>0 && level<256) {
       u8g2.setContrast(level);
       brightness = level;
-      sendResponse(200,F("OK"));
+      sendResponse(200,"OK",request);
       return;
     }
   }
-  sendResponse(200,F("invalid request"));
-}
-
-// Display the test screen
-void handleTestCard() {
-  sendResponse(200,F("Displaying alignment screen. Use the \"Restart System\" option when finished."));
-  u8g2.clearBuffer();
-  u8g2.setFont(NatRailSmall9);
-  u8g2.drawFrame(0,0,SCREEN_WIDTH,SCREEN_HEIGHT);
-  centreText("Screen Alignment Test",5);
-  u8g2.setFont(NatRailTiny7);
-  centreText("Restart system when done",20);
-  u8g2.sendBuffer();
-  while (true) {
-    server.handleClient();
-  }
+  sendResponse(200,"invalid request",request);
 }
 
 // Web GUI has requested updates be installed
-void handleOtaUpdate() {
-  sendResponse(200,F("Update initiated - check Departure Board display for progress"));
-  delay(500);
+void handleOtaUpdate(AsyncWebServerRequest *request) {
+  sendResponse(200,"Update initiated - check the Departure Board display for progress.",request);
+  manualUpdateCheck = true;
+}
+
+void doManualOtaCheck() {
   u8g2.clearBuffer();
-  centreText(F("Getting latest firmware"),LINE2);
-  centreText(F("details from GitHub..."),LINE3);
+  centreText("Getting latest firmware",LINE2);
+  centreText("details from GitHub...",LINE3);
   u8g2.sendBuffer();
 
-  if (ghUpdate.getLatestRelease()) {
+  if (ghUpdate.getLatestRelease()==UPD_SUCCESS) {
     checkForFirmwareUpdate();
   } else {
     for (int i=15;i>=0;i--) {
       showUpdateCompleteScreen("Firmware check failed.","Unable to retrieve latest","release information.",i,false);
       delay(1000);
     }
-    log_e("FW Update failed: %s\n",ghUpdate.getLastError().c_str());
   }
   // Always restart
   ESP.restart();
@@ -1707,99 +1583,74 @@ void handleOtaUpdate() {
  */
 
 // Call the National Rail Station Picker (called from index.htm)
-void handleStationPicker() {
-  if (!server.hasArg(F("q"))) {
-    sendResponse(400, F("Missing Query"));
+void handleStationPicker(AsyncWebServerRequest *request)
+{
+  if (!request->hasParam("q")) {
+    sendResponse(400,"Missing Query",request);
     return;
   }
 
-  String query = server.arg(F("q"));
+  String query = request->getParam("q")->value();
   if (query.length() <= 2) {
-    sendResponse(400, F("Query Too Short"));
+    sendResponse(400,"Query too short",request);
     return;
   }
 
   const char* host = "stationpicker.nationalrail.co.uk";
-  WiFiClientSecure httpsClient;
-  httpsClient.setInsecure();
-  httpsClient.setTimeout(10000);
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(4000);
 
-  int retryCounter = 0;
-  while (!httpsClient.connect(host, 443) && retryCounter++ < 20) {
-    delay(50);
-  }
-
-  if (retryCounter >= 20) {
-    sendResponse(408, F("NR Timeout"));
+  if (!client.connect(host, 443)) {
+    sendResponse(408, "NR Connect Timeout",request);
     return;
   }
 
-  httpsClient.print(String("GET /stationPicker/") + query + F(" HTTP/1.0\r\n") +
-                    F("Host: stationpicker.nationalrail.co.uk\r\n") +
-                    F("Referer: https://www.nationalrail.co.uk\r\n") +
-                    F("Origin: https://www.nationalrail.co.uk\r\n") +
-                    F("Connection: close\r\n\r\n"));
+  client.print(String("GET /stationPicker/") + query + " HTTP/1.0\r\n"
+               "Host: stationpicker.nationalrail.co.uk\r\n"
+               "Referer: https://www.nationalrail.co.uk\r\n"
+               "Origin: https://www.nationalrail.co.uk\r\n"
+               "Connection: close\r\n\r\n");
 
-  // Wait for response header
-  retryCounter = 0;
-  while (!httpsClient.available() && retryCounter++ < 15) {
-    delay(100);
+  int requestTimer = 0;
+  while (!client.available() && requestTimer<1000) {
+    requestTimer++;
+    delay(1);
   }
 
-  if (!httpsClient.available()) {
-    httpsClient.stop();
-    sendResponse(408, F("NRQ Timeout"));
-    return;
+  if (!client.available()) {
+    client.stop();
+    sendResponse(408,"NRQ Timeout",request);
   }
 
-  // Parse status code
-  String statusLine = httpsClient.readStringUntil('\n');
-  if (!statusLine.startsWith(F("HTTP/")) || statusLine.indexOf(F("200 OK")) == -1) {
-    httpsClient.stop();
+  String statusLine = client.readStringUntil('\n');
 
-    if (statusLine.indexOf(F("401")) > 0) {
-      sendResponse(401, F("Not Authorized"));
-    } else if (statusLine.indexOf(F("500")) > 0) {
-      sendResponse(500, F("Server Error"));
-    } else {
-      sendResponse(503, statusLine.c_str());
-    }
+  if (statusLine.indexOf("200") == -1) {
+    client.stop();
+    sendResponse(503, statusLine, request);
     return;
   }
 
   // Skip the remaining headers
-  while (httpsClient.connected() || httpsClient.available()) {
-    String line = httpsClient.readStringUntil('\n');
+  while (client.connected() || client.available()) {
+    String line = client.readStringUntil('\n');
     if (line == "\r") break;
   }
 
   // Start sending response
-  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server.send(200, contentTypeJson, "");
-
-  String buffer;
+  AsyncResponseStream *response = request->beginResponseStream("application/json");
+  uint8_t buffer[512];
   unsigned long timeout = millis() + 5000UL;
-
-  while ((httpsClient.connected() || httpsClient.available()) && millis() < timeout) {
-    while (httpsClient.available()) {
-      char c = httpsClient.read();
-      if (c <= 128) buffer += c;
-      if (buffer.length() >= 1024) {
-        server.sendContent(buffer);
-        buffer = "";
-        yield();
-      }
+  while ((client.connected() || client.available()) && millis() < timeout) {
+    int len = client.read(buffer, sizeof(buffer));
+    if (len > 0) {
+      response->write(buffer, len);
+      delay(1);
     }
   }
 
-  // Flush remaining buffer
-  if (buffer.length()) {
-    server.sendContent(buffer);
-  }
-
-  httpsClient.stop();
-  server.sendContent("");
-  server.client().stop();
+  client.stop();
+  request->send(response);
 }
 
 // Update the current weather message if weather updates are enabled and we have a lat/lon for the selected location
@@ -1807,11 +1658,9 @@ void updateCurrentWeather(float latitude, float longitude) {
   nextWeatherUpdate = millis() + 1200000; // update every 20 mins
   if (!latitude || !longitude) return; // No location co-ordinates
   strcpy(weatherMsg,"");
-  bool currentWeatherValid = currentWeather.updateWeather(openWeatherMapApiKey, String(latitude), String(longitude));
-  if (currentWeatherValid) {
-    currentWeather.currentWeather.toCharArray(weatherMsg,sizeof(weatherMsg));
-    weatherMsg[0] = toUpperCase(weatherMsg[0]);
-    weatherMsg[sizeof(weatherMsg)-1] = '\0';
+  bool currentWeatherResult = currentWeather.updateWeather(openWeatherMapApiKey, latitude, longitude);
+  if (currentWeatherResult == UPD_SUCCESS) {
+    strlcpy(weatherMsg,currentWeather.currentWeatherMessage,MAXWEATHERSIZE);
   } else {
     nextWeatherUpdate = millis() + 30000; // Try again in 30s
   }
@@ -1829,7 +1678,7 @@ void departureBoardLoop() {
   if ((millis() > nextDataUpdate) && (!isScrollingStops) && (!isScrollingService) && (lastUpdateResult != UPD_UNAUTHORISED) && (wifiConnected)) {
     timer = millis() + 2000;
     if (getStationBoard()) {
-      if ((lastUpdateResult == UPD_SUCCESS) || (lastUpdateResult == UPD_NO_CHANGE && firstLoad)) drawStationBoard(); // Something changed so redraw the board.
+      if ((lastUpdateResult == UPD_SUCCESS) || lastUpdateResult == UPD_SEC_CHANGE || (lastUpdateResult == UPD_NO_CHANGE && firstLoad)) drawStationBoard(); // Something changed so redraw the board.
     } else if (lastUpdateResult == UPD_UNAUTHORISED) showTokenErrorScreen();
 	  else if (lastUpdateResult == UPD_DATA_ERROR) {
 	    if (noDataLoaded) showNoDataScreen();
@@ -1948,7 +1797,7 @@ void busDeparturesLoop() {
 
   if (millis()>nextDataUpdate && !isScrollingService && !isScrollingPrimary && wifiConnected) {
     if (getBusDeparturesBoard()) {
-      if (lastUpdateResult == UPD_SUCCESS || lastUpdateResult == UPD_NO_CHANGE) drawBusDeparturesBoard(); // Something changed so redraw the board.
+      if (lastUpdateResult == UPD_SUCCESS || lastUpdateResult == UPD_SEC_CHANGE || lastUpdateResult == UPD_NO_CHANGE) drawBusDeparturesBoard(); // Something changed so redraw the board.
     } else if (lastUpdateResult == UPD_UNAUTHORISED) showTokenErrorScreen();
 	  else if (lastUpdateResult == UPD_DATA_ERROR) {
 	    if (noDataLoaded) showNoDataScreen();
@@ -2027,7 +1876,7 @@ void busDeparturesLoop() {
     // we're scrolling the primary service(s) into view
     u8g2.setClipWindow(0,LINE1,SCREEN_WIDTH,LINE1+7);
     if (station.numServices) drawBusService(0,scrollPrimaryYpos+LINE1-1,busDestX);
-    else centreText(F("No scheduled services"),scrollPrimaryYpos+LINE1);
+    else centreText("No scheduled services",scrollPrimaryYpos+LINE1);
     if (station.numServices>1) {
       u8g2.setClipWindow(0,LINE2,SCREEN_WIDTH,LINE2+7);
       drawBusService(1,scrollPrimaryYpos+LINE2-1,busDestX);
@@ -2076,7 +1925,7 @@ void setup(void) {
   u8g2.setFlipMode(1);                // Default is flipped
   u8g2.setFont(NatRailTiny7);
   String buildDate = String(__DATE__);
-  String notice = "\x82 " + buildDate.substring(buildDate.length()-4) + F(" Gadec Software");
+  String notice = "\xA9 " + buildDate.substring(buildDate.length()-4) + " Gadec Software";
 
   bool isFSMounted = LittleFS.begin(true);    // Start the File System, format if necessary
   strcpy(station.location,"");                // No default location
@@ -2087,7 +1936,7 @@ void setup(void) {
   u8g2.setContrast(brightness);               // Set the panel brightness to the user saved level
   if (flipScreen) u8g2.setFlipMode(0);
   u8g2.clearBuffer();
-  centreText(F("Tiny Departures Board"),4);
+  centreText("Tiny Departures Board",4);
   centreText(notice.c_str(),24);
   u8g2.sendBuffer();
   delay(5000);
@@ -2095,7 +1944,7 @@ void setup(void) {
   u8g2.clearBuffer();
   drawBuildTime();
   u8g2.sendBuffer();
-  progressBar(F("WiFi Connecting"),20);
+  progressBar("WiFi Connecting",20);
   WiFi.mode(WIFI_MODE_NULL);        // Reset the WiFi
   WiFi.setSleep(WIFI_PS_NONE);      // Turn off WiFi Powersaving
   WiFi.hostname(hostname);          // Set the hostname
@@ -2107,10 +1956,12 @@ void setup(void) {
   wm.setWiFiAutoReconnect(true);              // Attempt to auto-reconnect WiFi
   wm.setConnectTimeout(8);
   wm.setConnectRetries(2);
+  std::vector<const char *> menu = {"wifi","exit"};
+  wm.setMenu(menu);
 
   bool result = wm.autoConnect("Departures Board");    // Attempt to connect to WiFi (or enter interactive configuration mode)
-  if (!result) {
-      // Failed to connect/configure
+  if (!result || wifiConfigured) {
+      // Need to restart after config (cannot reuse port)
       ESP.restart();
   }
 
@@ -2133,70 +1984,208 @@ void setup(void) {
   WiFi.localIP().toString().toCharArray(ipBuff,sizeof(ipBuff));   // Get the IP address of the ESP32
   u8g2.drawStr(SCREEN_WIDTH-u8g2.getStrWidth(ipBuff),24,ipBuff);  // Display the IP address
   u8g2.sendBuffer();
-  progressBar(F("WiFi Connected"),30);
+  progressBar("WiFi Connected",30);
 
-  // Configure the local webserver paths
-  server.on(F("/"),handleRoot);
-  server.on(F("/erasewifi"),handleEraseWiFi);
-  server.on(F("/factoryreset"),handleFactoryReset);
-  server.on(F("/info"),handleInfo);
-  server.on(F("/formatffs"),handleFormatFFS);
-  server.on(F("/dir"),handleFileList);
-  server.onNotFound(handleNotFound);
-  server.on(F("/cat"),handleCat);
-  server.on(F("/del"),handleDelete);
-  server.on(F("/reboot"),handleReboot);
-  server.on(F("/stationpicker"),handleStationPicker);           // Used by the Web GUI to lookup station codes interactively
-  server.on(F("/firmware"),handleFirmwareInfo);                 // Used by the Web GUI to display the running firmware version
-  server.on(F("/savesettings"),HTTP_POST,handleSaveSettings);   // Used by the Web GUI to save updated configuration settings
-  server.on(F("/savekeys"),HTTP_POST,handleSaveKeys);           // Used by the Web GUI to verify/save API keys
-  server.on(F("/brightness"),handleBrightness);                 // Used by the Web GUI to interactively set the panel brightness
-  server.on(F("/ota"),handleOtaUpdate);                         // Used by the Web GUI to initiate a manual firmware/WebApp update
-  server.on(F("/testcard"),handleTestCard);                     // Used by the Web GUI to display screen alignment test card
-  server.on(F("/update"), HTTP_GET, []() {
-    server.sendHeader("Connection", "close");
-    server.send(200, contentTypeHtml, updatePage);
-  });
-  /*handling uploading firmware file */
-  server.on(F("/update"), HTTP_POST, []() {
-    server.sendHeader("Connection", "close");
-    sendResponse(200,(Update.hasError()) ? "FAIL" : "OK");
-    ESP.restart();
-  }, []() {
-    HTTPUpload& upload = server.upload();
-    if (upload.status == UPLOAD_FILE_START) {
-      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { //start with max available size
-        //Update.printError(Serial);
-      }
-    } else if (upload.status == UPLOAD_FILE_WRITE) {
-      /* flashing firmware to ESP*/
-      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-        //Update.printError(Serial);
-      }
-    } else if (upload.status == UPLOAD_FILE_END) {
-      if (Update.end(true)) { //true to set the size to the current progress
+// Configure the local webserver paths
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){handleRoot(request);});
+  server.on("/erasewifi", HTTP_GET, [](AsyncWebServerRequest *request){handleEraseWiFi(request);});
+  server.on("/factoryreset", HTTP_GET, [](AsyncWebServerRequest *request){handleFactoryReset(request);});
+  server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request){handleInfo(request);});
+  server.on("/formatffs", HTTP_GET, [](AsyncWebServerRequest *request){handleFormatFFS(request);});
+  server.on("/dir", HTTP_GET, [](AsyncWebServerRequest *request){handleFileList(request);});
+  server.onNotFound([](AsyncWebServerRequest *request){handleNotFound(request);});
+  server.on("/cat", HTTP_GET, [](AsyncWebServerRequest *request){handleCat(request);});
+  server.on("/del", HTTP_GET, [](AsyncWebServerRequest *request){handleDelete(request);});
+  server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request){handleReboot(request);});
+  server.on("/stationpicker", HTTP_GET, [](AsyncWebServerRequest *request){handleStationPicker(request);});
+  server.on("/firmware", HTTP_GET, [](AsyncWebServerRequest *request){handleFirmwareInfo(request);});
+  server.on("/brightness", HTTP_GET, [](AsyncWebServerRequest *request){handleBrightness(request);});
+  server.on("/ota", HTTP_GET, [](AsyncWebServerRequest *request){handleOtaUpdate(request);});
+  server.on("/success", HTTP_GET, [](AsyncWebServerRequest *request){request->send(200,contentTypeHtml,successPage);});
+
+  //
+  // Save settings returned by the Web GUI
+  //
+  server.on("/savesettings", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (request->_tempObject) {
+      String* body = (String*)(request->_tempObject);
+      saveFile("/config.json", body->c_str());
+
+      delete body; // Clean up memory
+      request->_tempObject = nullptr;
+
+      if ((!railIsSet && !busIsSet) || (!nrToken[0] && rdmDeparturesApiKey=="" && boardMode==MODE_RAIL) || request->hasParam("reboot")) {
+        // First time setup or base config change, we need a full reboot
+        sendResponse(200,"Configuration saved. The Departures Board will now restart.",request);
+        restartTimer.once(1, []() { ESP.restart(); });
       } else {
-        //Update.printError(Serial);
+        sendResponse(200,"Configuration updated. The Departures Board will update shortly.",request);
+        softResetNeeded = true;
       }
+    } else {
+      sendResponse(400,"Empty",request);
+    }
+  }, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+    if (!index) {
+      // First chunk: Create a String object in RAM
+      request->_tempObject = new String("");
+    }
+
+    String* body = (String*)(request->_tempObject);
+    for (size_t i = 0; i < len; i++) {
+      body->concat((char)data[i]);
     }
   });
 
-  server.on(F("/upload"), HTTP_GET, []() {
-      server.send(200, contentTypeHtml, uploadPage);
-  });
-  server.on(F("/upload"), HTTP_POST, []() {
-  }, handleFileUpload);
+  //
+  // Save the API keys returned from the Web GUI
+  //
+  server.on("/savekeys", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (request->_tempObject) {
+      String* body = (String*)(request->_tempObject);
 
-  server.on(F("/success"), HTTP_GET, []() {
-    server.send(200, contentTypeHtml, successPage);
+      JsonDocument doc;
+      bool result = true;
+      String msg = "The API keys have been saved successfully.";
+      DeserializationError error = deserializeJson(doc, body->c_str());
+      if (!error) {
+        if (!saveFile("/apikeys.json", body->c_str())) {
+          msg = "Failed to save the API keys to the file system (file system corrupt or full?)";
+          result = false;
+        } else {
+          JsonObject settings = doc.as<JsonObject>();
+          String nrToken = settings["nrToken"].as<String>();
+          String rdmDepToken = settings["rdmDepKey"].as<String>();
+          if (!nrToken.length() && !rdmDepToken.length()) msg+="\n\nNote: Only Bus Departures will be available without either Rail Data or National Rail keys.";
+        }
+      } else {
+        msg = "Invalid JSON format. No changes have been saved.";
+        result = false;
+      }
+
+      delete body; // Clean up memory
+      request->_tempObject = nullptr;
+
+      if (result) {
+        // Load/Update the API Keys in memory
+        loadApiKeys();
+        // If all location codes are blank we're in the setup process. If not, the keys have been changed so just reboot.
+        if (!railIsSet && !busIsSet) {
+          sendResponse(200,msg,request);
+          writeDefaultConfig();
+          showSetupCrsHelpScreen();
+        } else {
+          msg += "\n\nThe Departures Board will now restart.";
+          sendResponse(200,msg,request);
+          restartTimer.once(1, []() { ESP.restart(); });
+        }
+      } else {
+        sendResponse(400,msg,request);
+      }
+    } else {
+      sendResponse(400,"Empty",request);
+    }
+  }, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+    if (!index) {
+      // First chunk: Create a String object in RAM
+      request->_tempObject = new String("");
+    }
+
+    String* body = (String*)(request->_tempObject);
+    for (size_t i = 0; i < len; i++) {
+      body->concat((char)data[i]);
+    }
+  });
+
+  //
+  // Handle uploads to LittleFS
+  //
+  server.on("/upload", HTTP_GET, [](AsyncWebServerRequest *request){request->send(200,contentTypeHtml,uploadPage);});
+  server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {
+    request->redirect("/success");
+  }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+    if (!index) {
+      String path = "/" + filename;
+      if (LittleFS.exists(path)) LittleFS.remove(path);
+      size_t fileSize = request->header("Content-Length").toInt();
+      size_t availableSpace = LittleFS.totalBytes() - LittleFS.usedBytes() - 1024;
+
+      if (fileSize > availableSpace) {
+          sendResponse(507,"Insufficient storage space in File System",request);
+          request->client()->close();
+          return;
+      }
+      // First chunk: Create/Open the file and store the handle in _tempObject
+      // We use a pointer to a File object so we can keep it open between chunks
+      File *file = new File(LittleFS.open(path, FILE_WRITE));
+      if (!*file) {
+        sendResponse(500,"File System Error",request);
+        request->client()->close();
+        return;
+      }
+      request->_tempObject = file;
+    }
+
+    // If we have a valid file handle, write the current chunk
+    if (len && request->_tempObject) {
+      File *file = reinterpret_cast<File *>(request->_tempObject);
+      file->write(data, len);
+    }
+
+    if (final && request->_tempObject) {
+      // Last chunk: Close the file and clean up the pointer
+      File *file = reinterpret_cast<File *>(request->_tempObject);
+      file->close();
+      delete file;
+      request->_tempObject = nullptr;
+    }
+  });
+
+  //
+  // Handle manual firmware updates at /update
+  //
+  server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request){request->send(200,contentTypeHtml,updatePage);});
+  server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
+    // Check if the Update library encountered any errors.
+    bool shouldReboot = !Update.hasError();
+
+    // Create a response. The AJAX script is just looking for a successful HTTP status.
+    AsyncWebServerResponse *response = request->beginResponse((shouldReboot ? 200 : 500), "text/plain", (shouldReboot ? "OK" : "FAIL"));
+    response->addHeader("Connection", "close");
+    request->send(response);
+
+    // If successful, restart the ESP32 to boot into the new firmware
+    if (shouldReboot) restartTimer.once(0.5, []() { ESP.restart(); });
+  }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+    if (!index) {
+      // First chunk: Initialize the OTA Update
+      // UPDATE_SIZE_UNKNOWN tells the library to just accept chunks until 'final' is true
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+        sendResponse(500,"Update begin failed",request);
+      }
+    }
+
+    // Write chunk data to the flash memory
+    if (!Update.hasError() && len) {
+      if (Update.write(data, len) != len) {
+        sendResponse(500,"Update write failed",request);
+      }
+    }
+
+    // Final chunk: Close the OTA process
+    if (final) {
+      if (!Update.end(true)) {
+        sendResponse(500,"Update end failed",request);
+      }
+    }
   });
 
   server.begin();     // Start the local web server
 
   // Check for Firmware updates?
   if (firmwareUpdates) {
-    progressBar(F("Checking for updates"),40);
-    if (ghUpdate.getLatestRelease()) {
+    progressBar("Checking for updates",40);
+    if (ghUpdate.getLatestRelease()==UPD_SUCCESS) {
       checkForFirmwareUpdate();
     } else {
       for (int i=15;i>=0;i--) {
@@ -2211,19 +2200,14 @@ void setup(void) {
   checkPostWebUpgrade();
 
   // First time configuration?
-  if ((!crsCode[0] && !busAtco[0]) || (!nrToken[0] && boardMode==MODE_RAIL)) {
+  if ((!railIsSet && !busIsSet) || (!nrToken[0] && rdmDeparturesApiKey=="" && boardMode==MODE_RAIL)) {
     if (!apiKeys) showSetupKeysHelpScreen();
     else showSetupCrsHelpScreen();
     // First time setup mode will exit with a reboot, so just loop here forever servicing web requests
-    while (true) {
-      yield();
-      server.handleClient();
-    }
+    while (true) { delay(10); }
   }
 
-  configTime(0,0, ntpServer);                 // Configure NTP server for setting the clock
-  setenv("TZ",ukTimezone,1);  // Configure UK TimeZone (default and fallback if custom is invalid)
-  tzset();                                    // Set the TimeZone
+  configTzTime(ukTimezone, "uk.pool.ntp.org","time.cloudflare.com","time.windows.com");
   if (timezone!="") {
     setenv("TZ",timezone.c_str(),1);
     tzset();
@@ -2233,40 +2217,41 @@ void setup(void) {
   int p=50;
   int ntpAttempts=0;
   bool ntpResult=true;
-  progressBar(F("Setting the clock"),50);
-  if(!getLocalTime(&timeinfo)) {              // attempt to set the clock from NTP
+  progressBar("Setting the clock",50);
+  if(!getLocalTime(&timeinfo,2000)) {              // attempt to set the clock from NTP
     do {
-      delay(500);                             // If no NTP response, wait 500ms and retry
-      ntpResult = getLocalTime(&timeinfo);
+      ntpResult = getLocalTime(&timeinfo,2000);
       ntpAttempts++;
       p+=5;
-      progressBar(F("Setting the clock"),p);
+      progressBar("Setting the clock",p);
       if (p>80) p=45;
     } while ((!ntpResult) && (ntpAttempts<10));
   }
   if (!ntpResult) {
     // Sometimes NTP/UDP fails. A reboot usually fixes it.
-    progressBar(F("NTP Failed. Will reboot."),0);
+    progressBar("NTP Failed. Will reboot.",0);
     delay(5000);
     ESP.restart();
   }
 
+
   station.numServices=0;
   if (boardMode == MODE_RAIL) {
-      progressBar(F("Initialising Nat'l Rail"),60);
-      raildata = new raildataXmlClient();
-      int res = raildata->init(wsdlHost, wsdlAPI, &raildataCallback);
-      if (res != UPD_SUCCESS) {
-        showWsdlFailureScreen();
-        while (true) { server.handleClient(); yield();}
+      if (!useRDMclient) {
+        // Using legacy darwin XML client
+        progressBar("Initialising Nat'l Rail",60);
+        int res = darwinRailData.init(wsdlHost, wsdlAPI);
+        if (res != UPD_SUCCESS) {
+          showWsdlFailureScreen();
+          while (true) {delay(1);}
+        }
       }
-      progressBar(F("Initialising Nat'l Rail"),70);
-      raildata->cleanFilter(platformFilter,cleanPlatformFilter,sizeof(platformFilter));
+      progressBar("Initialising Nat'l Rail",70);
+      rdmRailData.cleanFilter(platformFilter,cleanPlatformFilter,sizeof(platformFilter));
   } else if (boardMode == MODE_BUS) {
-      progressBar(F("Initialising BusTimes"),70);
-      busdata = new busDataClient();
+      progressBar("Initialising BusTimes",70);
       // Create a cleaned filter
-      busdata->cleanFilter(busFilter,cleanBusFilter,sizeof(busFilter));
+      busdata.cleanFilter(busFilter,cleanBusFilter,sizeof(busFilter));
       startupProgressPercent=70;
   }
 }
@@ -2303,5 +2288,11 @@ void loop(void) {
       break;
   }
 
-  server.handleClient();
+  if (manualUpdateCheck) doManualOtaCheck();
+
+  if (softResetNeeded) {
+    softResetNeeded = false;
+    softResetBoard();
+  }
+
 }

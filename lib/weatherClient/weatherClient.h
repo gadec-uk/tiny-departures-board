@@ -1,7 +1,7 @@
 /*
- * Tiny Departures Board (c) 2026 Gadec Software
+ * Departures Board (c) 2025-2026 Gadec Software
  *
- * OpenWeatherMap Weather Client Library
+ * Open-Meteo / OpenWeather Map Weather Client Library
  *
  * https://github.com/gadec-uk/tiny-departures-board
  *
@@ -9,33 +9,39 @@
  * To view a copy of this license, visit https://creativecommons.org/licenses/by-nc-sa/4.0/
  */
 #pragma once
-#include <JsonListener.h>
-#include <JsonStreamingParser.h>
+#include <JsonListenerGS.h>
+#include <JsonStreamingParserGS.h>
+#include <sharedDataStructs.h>
+#include <responseCodes.h>
 
-class weatherClient: public JsonListener {
+class weatherClient: public JsonListenerGS {
 
     private:
-        const char* apiHost = "api.openweathermap.org";
-        String currentKey = "";
-        String currentObject = "";
+        static const char* const apiHosts[];
+        enum weatherSources {
+            OPENWEATHERMAP = 0,
+            OPENMETEO = 1
+        } weatherSource;
+
+        sharedBufferSpace* js = nullptr;
         int weatherItem = 0;
 
-        String description;
         float temperature;
         float windSpeed;
+        int weatherCode;
+
+        const char* getWeatherDescription(int code);
 
     public:
-        String currentWeather = "";
-        String lastErrorMsg = "";
+        char currentWeatherMessage[MAXWEATHERSIZE];
 
-        weatherClient();
-
-        bool updateWeather(String apiKey, String lat, String lon);
+        weatherClient(sharedBufferSpace *sharedBuffer);
+        int updateWeather(const char *apiKey, float lat, float lon);
 
         virtual void whitespace(char c);
         virtual void startDocument();
-        virtual void key(String key);
-        virtual void value(String value);
+        virtual void key(const char *key);
+        virtual void value(const char *value);
         virtual void endArray();
         virtual void endObject();
         virtual void endDocument();

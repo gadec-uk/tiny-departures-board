@@ -1,5 +1,5 @@
 /*
- * Tiny Departures Board (c) 2026 Gadec Software
+ * Departures Board (c) 2025-2026 Gadec Software
  *
  * MD5 Utilities Library - calculate the MD5 hash of a file on the LittleFS file system. Convert a base64 MD5 hash to Hex.
  *
