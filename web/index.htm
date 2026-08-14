@@ -715,7 +715,7 @@
         if (response.ok) {
           appState.jsonPrevFirmware = await response.json();
         } else {
-          appState.jsonPrevFirmware = "B1.0-W1.0";
+          appState.jsonPrevFirmware = { fw: "B1.0-W1.0" };
         }
       } catch (err) {
         console.error("Prev Firmware fetch error:", err);

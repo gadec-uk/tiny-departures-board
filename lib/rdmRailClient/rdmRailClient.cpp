@@ -10,7 +10,7 @@
  */
 
 #include <rdmRailClient.h>
-#include <jsonListenerGS.h>
+#include <JsonListenerGS.h>
 #include <WiFiClientSecure.h>
 #include <time.h>
 
@@ -319,13 +319,13 @@ int rdmRailClient::fetchDepartures(rdStation *station, stnMessages *messages, co
     size_t arraySize = xStation->numServices;
     std::sort(xStation->service, xStation->service+arraySize,compareTimes);
 
-    if (xStation->numServices && (xStation->service[0].isCancelled || strcmp(xStation->service[0].etd,"Delayed")==0)) {
+    while (xStation->numServices > 1 && (xStation->service[0].isCancelled || strcmp(xStation->service[0].etd,"Delayed")==0)) {
         // First service is cancelled or delayed (without estimate), check if it should be dropped
         struct tm nowtime;
         getLocalTime(&nowtime);
         char timenow[6];
         sprintf(timenow,"%02d:%02d",nowtime.tm_hour,nowtime.tm_min);
-        if (timeDiff(xStation->service[0].sortTime,timenow) < -1) deleteService(0);
+        if (timeDiff(xStation->service[0].sortTime,timenow) < -1) deleteService(0); else break; // stop checking
     }
 
     // Handle getting last seen location from GetServiceDetails api

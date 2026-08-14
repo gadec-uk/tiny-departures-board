@@ -21,8 +21,8 @@ raildataXmlClient::raildataXmlClient(rdiStation *station, stnMessages *messages,
 bool raildataXmlClient::compareTimes(const rdiService& a, const rdiService& b) {
     // Convert time strings to integers for comparison
     int hour1, minute1, hour2, minute2;
-    sscanf(a.sTime, "%d:%d", &hour1, &minute1);
-    sscanf(b.sTime, "%d:%d", &hour2, &minute2);
+    sscanf(a.sortTime, "%d:%d", &hour1, &minute1);
+    sscanf(b.sortTime, "%d:%d", &hour2, &minute2);
 
     // Compare hours first
     if (hour1 != hour2) {
@@ -119,6 +119,7 @@ int raildataXmlClient::init(const char *wsdlHost, const char *wsdlAPI)
       if (delim>0) {
         soapURL.substring(8,delim).toCharArray(soapHost,sizeof(soapHost));
         soapURL.substring(delim).toCharArray(soapAPI,sizeof(soapAPI));
+        if (soapURL.substring(8,delim).endsWith(":443")) soapHost[strlen(soapHost)-4] = '\0';
         WDSLok = true;
         return UPD_SUCCESS;
       }
@@ -430,13 +431,13 @@ int raildataXmlClient::fetchDepartures(rdStation *station, stnMessages *messages
     size_t arraySize = xStation->numServices;
     std::sort(xStation->service, xStation->service+arraySize,compareTimes);
 
-    if (xStation->numServices && (xStation->service[0].isCancelled || strcmp(xStation->service[0].etd,"Delayed")==0)) {
+    while (xStation->numServices > 1 && (xStation->service[0].isCancelled || strcmp(xStation->service[0].etd,"Delayed")==0)) {
         // First service is cancelled or delayed (without estimate), check if it should be dropped
         struct tm nowtime;
         getLocalTime(&nowtime);
         char timenow[6];
         sprintf(timenow,"%02d:%02d",nowtime.tm_hour,nowtime.tm_min);
-        if (timeDiff(xStation->service[0].sortTime,timenow) < -1) deleteService(0);
+        if (timeDiff(xStation->service[0].sortTime,timenow) < -1) deleteService(0); else break; // stop checking
     }
 
     // Handle getting last seen location from GetServiceDetails api
