@@ -48,6 +48,8 @@ Solder the four wires to the **BACK** of the OLED panel (or directly to the head
 
 The project uses the Arduino framework and the ESP32 v3.3.9 core. If you want to build from source, you'll need [PlatformIO](https://platformio.org).
 
+The easiest way to install the firmware for the first time is to use the online web based installer [here](https://tiny-departures-board.github.io). You will need to use Chrome, Edge or Firefox as your browser as Safari does not support Web Serial.
+
 Alternatively, you can download pre-compiled firmware images from the [releases](https://github.com/gadec-uk/tiny-departures-board/releases). These can be installed over the USB serial connection using [esptool](https://github.com/espressif/esptool). If you have python installed, install with *pip install esptool*. For convenience, a pre-compiled executable version for Windows is included [here](https://github.com/gadec-uk/tiny-departures-board/tree/main/esptool).
 
 Attach the ESP32-C3 SuperMini board via it's USB port and use the following command to flash the firmware:
@@ -71,7 +73,7 @@ Subsequent updates can be carried out automatically over-the-air or you can manu
 
 ### First time configuration
 
-WiFiManager is used to setup the initial WiFi connection on first boot. The ESP32 will broadcast a temporary WiFi network named "Departures Board", connect to the network and follow the on-screen instuctions. You can also watch a video walkthrough of setup and configuration process below.
+WiFiManager is used to setup the initial WiFi connection on first boot. The ESP32 will broadcast a temporary WiFi network named "Departures Board", connect to the network and follow the on-screen instructions. You can also watch a video walk-through of setup and configuration process below.
 
 [![Tiny Departures Board Setup Video](https://github.com/user-attachments/assets/d72efaa5-143c-4769-99b4-29d22d5fdb06)](https://youtu.be/3kOFSdS7M2M)
 
@@ -86,7 +88,7 @@ At start-up, the ESP32's IP address is displayed. To change the station or to co
 - **Only show these platforms** - filter services based on the platform they depart from. Note: there are many services for which platform number is not supplied, these would also be filtered out.
 - **Bus Stop ATCO code** - type the ATCO number of the bus stop you want to monitor (see [below](#bus-stop-atco-codes) for details).
 - **Only show these Bus services** - filter buses by service numbers (enter a list of the service numbers, comma separated).
-- **Recently verfied ATCO codes** - quickly select from recently used bus stop ATCO codes.
+- **Recently verified ATCO codes** - quickly select from recently used bus stop ATCO codes.
 - **Brightness** - adjusts the brightness of the OLED screen.
 - **Include current weather at station/bus stop** - optionally display weather conditions at the selected station or bus stop.
 - **Include bus replacement services** - optionally include bus replacement services (National Rail mode).
@@ -128,4 +130,4 @@ To set a custom time zone for the departure board clock, you will need to enter 
 This software is completely free for non-commercial use without obligation. If you would like to support me and encourage ongoing updates, you can [buy me a coffee!](https://buymeacoffee.com/gadec.uk)
 
 ### Licence
-This work is licensed under **Creative Commons Attribution-NonCommercial-ShareAlike 4.0**. To view a copy of this licence, visit [https://creativecommons.org/licenses/by-nc-sa/4.0/](https://creativecommons.org/licenses/by-nc-sa/4.0/). Note: the terms of the licence prohibit commericial use of this work, this includes *any* reselling of the work in kit or assembled form for commercial gain.
+This work is licensed under **Creative Commons Attribution-NonCommercial-ShareAlike 4.0**. To view a copy of this licence, visit [https://creativecommons.org/licenses/by-nc-sa/4.0/](https://creativecommons.org/licenses/by-nc-sa/4.0/). Note: the terms of the licence prohibit commercial use of this work, this includes *any* reselling of the work in kit or assembled form for commercial gain.
