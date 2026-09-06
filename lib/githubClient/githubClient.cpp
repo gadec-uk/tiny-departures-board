@@ -116,6 +116,7 @@ void github::startDocument() {
     js->currentPath[0] = '\0';
     js->arrayName[0] = '\0';
     js->objectCurrentKey[0] = '\0';
+    js->currentKey[0] = '\0';
 }
 
 void github::key(const char *key) {

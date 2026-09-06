@@ -55,6 +55,9 @@ class rdmRailClient: public JsonListenerGS {
         bool filterPlatforms = false;
         bool keepRoute = false;
 
+        char stcp[6];
+        char *endCAL;
+
         static bool compareTimes(const rdiService& a, const rdiService& b);
         void removeHtmlTags(char* input);
         void replaceWord(char* input, const char* target, const char* replacement);

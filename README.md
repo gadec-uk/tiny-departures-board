@@ -2,14 +2,16 @@
 
 This is an tiny (00 gauge model railway size) live Departures Board replicating those at many UK railway stations (using data provided by National Rail's public API) and UK wide bus stops (using data provided by bustimes.org). This implementation uses a 0.91" OLED display panel with SSD1306 display controller onboard, driven by an ESP32-C3 SuperMini processor board. STL files are also provided for 3D printing the custom case. A small number of pre-assembled departure boards are also available exclusively from our [store](https://store.gadec.co.uk).
 
-This project is based on the table top Departures Board available [here](https://github.com/gadec-uk/departures-board)
+This project is based on the table top Departures Board available [here](https://github.com/gadec-uk/departures-board).
+
+A larger LED Matrix departures board project, with audio station announcements, is also available [here](https://github.com/gadec-uk/matrix-departures-board).
 
 ## Features
 * All processing is done onboard by the ESP32-C3 processor
 * Smooth animation matching the real departures boards
 * Displays up to the next 9 departures with scheduled time, destination, calling stations and expected departure time
 * Optionally only show services calling at a selected railway station
-* Optionally only show services departing from selected platform numbers 
+* Optionally only show services departing from selected platform numbers
 * Displays Network Rail service messages
 * Train information (operator, class, number of coaches etc.)
 * In Bus mode, displays up to the next 9 departures with service number, destination and schedule/expected time

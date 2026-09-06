@@ -89,6 +89,7 @@ struct rdService {
       int timeToStation;
       char scheduled[6];
       char expected[6];
+      char sortTime[6];
   };
 
   struct busTubeStation {

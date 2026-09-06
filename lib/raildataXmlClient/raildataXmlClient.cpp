@@ -743,6 +743,7 @@ void raildataXmlClient::sanitiseData() {
     replaceWord(xMessages->messages[i],"<p>","");
     replaceWord(xMessages->messages[i],"</p>"," ");
     replaceWord(xMessages->messages[i],"<br>"," ");
+    replaceWord(xMessages->messages[i],"&nbsp;"," ");
 
     removeHtmlTags(xMessages->messages[i]);
     replaceWord(xMessages->messages[i],"&amp;","&");
@@ -751,7 +752,7 @@ void raildataXmlClient::sanitiseData() {
     pruneFromPhrase(xMessages->messages[i]," More details ");
     pruneFromPhrase(xMessages->messages[i]," Latest information ");
     pruneFromPhrase(xMessages->messages[i]," Further information ");
-    pruneFromPhrase(xMessages->messages[i]," More information can ");
+    pruneFromPhrase(xMessages->messages[i]," More information ");
     trimSpaces(xMessages->messages[i]);
 
     fixFullStop(xMessages->messages[i]);
@@ -821,6 +822,9 @@ void raildataXmlClient::value(const char *value)
         if (tagLevel<6 || tagLevel==9 || tagLevel>11) return;
 
         if (tagLevel == 11 && tagPath.endsWith("callingPoint/lt8:locationName")) {
+            // Save the current position of the end of the calling list
+            endCAL = xStation->service[id].calling + strlen(xStation->service[id].calling);
+            // Check if there's room to add another stopping point
             if ((strlen(xStation->service[id].calling) + strlen(value) + 13) < sizeof(xStation->service[0].calling)) {
                 // Add the calling point, add a comma prefix if this isn't the first one
                 if (xStation->service[id].calling[0]) strcat(xStation->service[id].calling,", ");
@@ -829,12 +833,19 @@ void raildataXmlClient::value(const char *value)
             }
             return;
         } else if (tagLevel == 11 && tagPath.endsWith("callingPoint/lt8:st") && addedStopLocation) {
+            strlcpy(stcp,value,sizeof(stcp));
+            return;
+        } else if (tagLevel == 11 && tagPath.endsWith("callingPoint/lt8:et") && addedStopLocation) {
+            if (isdigit(value[0])) strlcpy(stcp,value,sizeof(stcp)); // Use the eta if available
             // check there's still room to add the eta of the calling point
-            if ((strlen(xStation->service[id].calling) + strlen(value) + 4) < sizeof(xStation->service[0].calling)) {
+            if ((strlen(xStation->service[id].calling) + strlen(stcp) + 4) < sizeof(xStation->service[0].calling)) {
                 strcat(xStation->service[id].calling," (");
-                strcat(xStation->service[id].calling,value);
+                strcat(xStation->service[id].calling,stcp);
                 strcat(xStation->service[id].calling,")");
             }
+            return;
+        } else if (tagLevel == 11 && tagPath.endsWith("callingPoint/lt8:isCancelled") && addedStopLocation) {
+            if (strcmp(value,"true")==0) *endCAL = '\0'; // remove this calling point, it's cancelled
             addedStopLocation = false;
             return;
         } else if (tagLevel == 11 && tagName == "lt7:coachClass") {

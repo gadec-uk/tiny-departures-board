@@ -617,6 +617,7 @@ void rdmRailClient::sanitiseData() {
     replaceWord(xMessages->messages[i],"<p>","");
     replaceWord(xMessages->messages[i],"</p>"," ");
     replaceWord(xMessages->messages[i],"<br>"," ");
+    replaceWord(xMessages->messages[i],"&nbsp;"," ");
 
     removeHtmlTags(xMessages->messages[i]);
     replaceWord(xMessages->messages[i],"&amp;","&");
@@ -625,7 +626,7 @@ void rdmRailClient::sanitiseData() {
     pruneFromPhrase(xMessages->messages[i]," More details ");
     pruneFromPhrase(xMessages->messages[i]," Latest information ");
     pruneFromPhrase(xMessages->messages[i]," Further information ");
-    pruneFromPhrase(xMessages->messages[i]," More information can ");
+    pruneFromPhrase(xMessages->messages[i]," More information ");
     trimSpaces(xMessages->messages[i]);
 
     fixFullStop(xMessages->messages[i]);
@@ -669,6 +670,7 @@ void rdmRailClient::startDocument() {
     js->currentPath[0] = '\0';
     js->arrayName[0] = '\0';
     js->objectCurrentKey[0] = '\0';
+    js->currentKey[0] = '\0';
     inCallingArray = 0;
     arrayNestLevel = 0;
 }
@@ -682,6 +684,8 @@ void rdmRailClient::key(const char *key) {
 void rdmRailClient::value(const char *value) {
     if (fetchingDepartures) {
         if (strcmp(js->currentKey, "locationName")==0 && inCallingArray == 1) {
+            // Save the current position of the end of the calling list
+            endCAL = xStation->service[id].calling + strlen(xStation->service[id].calling);
             // Check if there's room to add another stopping point
             if ((strlen(xStation->service[id].calling) + strlen(value) + 13) < sizeof(xStation->service[0].calling)) {
                 // Add the calling point, add a comma prefix if this isn't the first one
@@ -691,10 +695,18 @@ void rdmRailClient::value(const char *value) {
             }
             return;
         } else if (strcmp(js->currentKey, "st")==0 && inCallingArray == 1 && addedStopLocation) {
+            // Save the scheduled time of the calling point
+            strlcpy(stcp,value,sizeof(stcp));
+            return;
+        } else if (strcmp(js->currentKey, "et")==0 && inCallingArray == 1 && addedStopLocation) {
+            if (isdigit(value[0])) strlcpy(stcp,value,sizeof(stcp)); // Use the eta if available
             // check there's still room to add the eta of the calling point
-            if ((strlen(xStation->service[id].calling) + strlen(value) + 4) < sizeof(xStation->service[0].calling)) {
-                sprintf(xStation->service[id].calling + strlen(xStation->service[id].calling)," (%s)",value);
+            if ((strlen(xStation->service[id].calling) + strlen(stcp) + 4) < sizeof(xStation->service[0].calling)) {
+                sprintf(xStation->service[id].calling + strlen(xStation->service[id].calling)," (%s)",stcp);
             }
+            return;
+        } else if (strcmp(js->currentKey, "isCancelled")==0 && inCallingArray == 1 && addedStopLocation) {
+            if (strcmp(value,"true")==0) *endCAL = '\0'; // remove this calling point, it's cancelled
             addedStopLocation = false;
             return;
         } else if (strcmp(js->currentKey, "coachClass")==0 && strcmp(js->arrayName, "formation/coaches")==0 && arrayNestLevel==2) {

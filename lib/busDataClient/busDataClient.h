@@ -12,6 +12,7 @@
 #include <WiFiClientSecure.h>
 #include <sharedDataStructs.h>
 #include <responseCodes.h>
+#include <time.h>
 
 #define MAXBUSFILTERSIZE 25
 #define MAX_SCANNED_PAGES 2
@@ -35,10 +36,12 @@ class busDataClient {
         long dataReceived;
         bool bChunked;
         char pageOffset[40];
+        struct tm timeinfo;
         busTubeStation* xBusStop = nullptr;
         sharedBufferSpace* js = nullptr;
 
         String stripTag(String html);
+        static bool compareTimes(const busTubeService& a, const busTubeService& b);
         void replaceWord(char* input, const char* target, const char* replacement);
         void trim(char* &start, char* &end);
         bool equalsIgnoreCase(const char* a, int a_len, const char* b);

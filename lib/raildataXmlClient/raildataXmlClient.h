@@ -58,6 +58,8 @@ class raildataXmlClient: public xmlListener {
 
         bool firstDataLoad;
         bool endXml;
+        char stcp[6];
+        char *endCAL;
 
         char platformFilter[MAXPLATFORMFILTERSIZE];
         bool filterPlatforms = false;
